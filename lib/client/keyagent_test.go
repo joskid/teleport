@@ -37,6 +37,7 @@ import (
 	"github.com/gravitational/teleport/lib/services"
 	"github.com/gravitational/teleport/lib/sshutils"
 	"github.com/gravitational/teleport/lib/tlsca"
+	"github.com/gravitational/teleport/lib/utils"
 
 	"github.com/gravitational/trace"
 
@@ -450,9 +451,7 @@ func (s *KeyAgentTestSuite) makeKey(username string, allowedLogins []string, ttl
 }
 
 func startDebugAgent() (closer func(), err error) {
-	startedC := make(chan struct{})
 	rand.Seed(time.Now().Unix())
-
 	socketpath := filepath.Join(os.TempDir(),
 		fmt.Sprintf("teleport-%d-%d.socket", os.Getpid(), rand.Uint32()))
 
@@ -464,6 +463,7 @@ func startDebugAgent() (closer func(), err error) {
 	systemAgent := agent.NewKeyring()
 	os.Setenv(teleport.SSHAuthSock, socketpath)
 
+	startedC := make(chan struct{})
 	doneC := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(2)

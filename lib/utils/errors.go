@@ -1,5 +1,5 @@
 /*
-Copyright 2020 Gravitational, Inc.
+Copyright 2021 Gravitational, Inc.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -16,13 +16,18 @@ limitations under the License.
 
 package utils
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/gravitational/teleport"
+)
 
 // IsUseOfClosedNetworkError returns true if the specified error
 // indicates the use of closed network connection
+// TODO(dmitri): replace in go1.16 with `errors.Is(err, net.ErrClosed)`
 func IsUseOfClosedNetworkError(err error) bool {
 	if err == nil {
 		return false
 	}
-	return strings.Contains(err.Error(), "use of closed network connection")
+	return strings.Contains(err.Error(), teleport.UseOfClosedNetworkConnection)
 }
