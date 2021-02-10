@@ -22,7 +22,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/gravitational/teleport/lib/auth"
+	authserver "github.com/gravitational/teleport/lib/auth/server"
 	"github.com/gravitational/teleport/lib/srv/db/common"
 	"github.com/gravitational/teleport/lib/srv/db/mysql/protocol"
 
@@ -41,7 +41,7 @@ type Proxy struct {
 	// TLSConfig is the proxy TLS configuration.
 	TLSConfig *tls.Config
 	// Middleware is the auth middleware.
-	Middleware *auth.Middleware
+	Middleware *authserver.Middleware
 	// Service is used to connect to a remote database service.
 	Service common.Service
 	// Log is used for logging.

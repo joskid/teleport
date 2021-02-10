@@ -15,7 +15,9 @@ import (
 	"github.com/gravitational/teleport"
 	"github.com/gravitational/teleport/api/client/proto"
 	"github.com/gravitational/teleport/lib/auth"
+	authclient "github.com/gravitational/teleport/lib/auth/client"
 	"github.com/gravitational/teleport/lib/auth/native"
+	"github.com/gravitational/teleport/lib/auth/server"
 	"github.com/gravitational/teleport/lib/client"
 	"github.com/gravitational/teleport/lib/client/identityfile"
 	"github.com/gravitational/teleport/lib/defaults"
@@ -111,7 +113,7 @@ func (a *AuthCommand) Initialize(app *kingpin.Application, config *service.Confi
 
 // TryRun takes the CLI command as an argument (like "auth gen") and executes it
 // or returns match=false if 'cmd' does not belong to it
-func (a *AuthCommand) TryRun(cmd string, client auth.ClientI) (match bool, err error) {
+func (a *AuthCommand) TryRun(cmd string, client authclient.ClientI) (match bool, err error) {
 	switch cmd {
 	case a.authGenerate.FullCommand():
 		err = a.GenerateKeys()
@@ -130,7 +132,7 @@ func (a *AuthCommand) TryRun(cmd string, client auth.ClientI) (match bool, err e
 // ExportAuthorities outputs the list of authorities in OpenSSH compatible formats
 // If --type flag is given, only prints keys for CAs of this type, otherwise
 // prints all keys
-func (a *AuthCommand) ExportAuthorities(client auth.ClientI) error {
+func (a *AuthCommand) ExportAuthorities(client authclient.ClientI) error {
 	var typesToExport []services.CertAuthType
 
 	// this means to export TLS authority
@@ -267,7 +269,7 @@ func (a *AuthCommand) GenerateKeys() error {
 }
 
 // GenerateAndSignKeys generates a new keypair and signs it for role
-func (a *AuthCommand) GenerateAndSignKeys(clusterAPI auth.ClientI) error {
+func (a *AuthCommand) GenerateAndSignKeys(clusterAPI authclient.ClientI) error {
 	switch {
 	case a.outputFormat == identityfile.FormatDatabase:
 		return a.generateDatabaseKeys(clusterAPI)
@@ -281,8 +283,8 @@ func (a *AuthCommand) GenerateAndSignKeys(clusterAPI auth.ClientI) error {
 }
 
 // RotateCertAuthority starts or restarts certificate authority rotation process
-func (a *AuthCommand) RotateCertAuthority(client auth.ClientI) error {
-	req := auth.RotateRequest{
+func (a *AuthCommand) RotateCertAuthority(client authclient.ClientI) error {
+	req := server.RotateRequest{
 		Type:        services.CertAuthType(a.rotateType),
 		GracePeriod: &a.rotateGracePeriod,
 		TargetPhase: a.rotateTargetPhase,
@@ -304,7 +306,7 @@ func (a *AuthCommand) RotateCertAuthority(client auth.ClientI) error {
 	return nil
 }
 
-func (a *AuthCommand) generateHostKeys(clusterAPI auth.ClientI) error {
+func (a *AuthCommand) generateHostKeys(clusterAPI authclient.ClientI) error {
 	// only format=openssh is supported
 	if a.outputFormat != identityfile.FormatOpenSSH {
 		return trace.BadParameter("invalid --format flag %q, only %q is supported", a.outputFormat, identityfile.FormatOpenSSH)
@@ -335,7 +337,7 @@ func (a *AuthCommand) generateHostKeys(clusterAPI auth.ClientI) error {
 	if err != nil {
 		return trace.Wrap(err)
 	}
-	key.TrustedCA = auth.AuthoritiesToTrustedCerts(hostCAs)
+	key.TrustedCA = server.AuthoritiesToTrustedCerts(hostCAs)
 
 	// if no name was given, take the first name on the list of principals
 	filePath := a.output
@@ -356,7 +358,7 @@ func (a *AuthCommand) generateHostKeys(clusterAPI auth.ClientI) error {
 	return nil
 }
 
-func (a *AuthCommand) generateDatabaseKeys(clusterAPI auth.ClientI) error {
+func (a *AuthCommand) generateDatabaseKeys(clusterAPI authclient.ClientI) error {
 	key, err := client.NewKey()
 	if err != nil {
 		return trace.Wrap(err)
@@ -379,7 +381,7 @@ func (a *AuthCommand) generateDatabaseKeys(clusterAPI auth.ClientI) error {
 		return trace.Wrap(err)
 	}
 	key.TLSCert = resp.Cert
-	key.TrustedCA = []auth.TrustedCerts{{TLSCertificates: resp.CACerts}}
+	key.TrustedCA = []server.TrustedCerts{{TLSCertificates: resp.CACerts}}
 	filesWritten, err := identityfile.Write(identityfile.WriteConfig{
 		OutputPath:           a.output,
 		Key:                  key,
@@ -394,7 +396,7 @@ func (a *AuthCommand) generateDatabaseKeys(clusterAPI auth.ClientI) error {
 	return nil
 }
 
-func (a *AuthCommand) generateUserKeys(clusterAPI auth.ClientI) error {
+func (a *AuthCommand) generateUserKeys(clusterAPI authclient.ClientI) error {
 	// Validate --proxy flag.
 	if err := a.checkProxyAddr(clusterAPI); err != nil {
 		return trace.Wrap(err)
@@ -447,7 +449,7 @@ func (a *AuthCommand) generateUserKeys(clusterAPI auth.ClientI) error {
 	if err != nil {
 		return trace.Wrap(err)
 	}
-	key.TrustedCA = auth.AuthoritiesToTrustedCerts(hostCAs)
+	key.TrustedCA = server.AuthoritiesToTrustedCerts(hostCAs)
 
 	// write the cert+private key to the output:
 	filesWritten, err := identityfile.Write(identityfile.WriteConfig{
@@ -464,7 +466,7 @@ func (a *AuthCommand) generateUserKeys(clusterAPI auth.ClientI) error {
 	return nil
 }
 
-func (a *AuthCommand) checkLeafCluster(clusterAPI auth.ClientI) error {
+func (a *AuthCommand) checkLeafCluster(clusterAPI authclient.ClientI) error {
 	if a.outputFormat != identityfile.FormatKubernetes && a.leafCluster != "" {
 		// User set --cluster but it's not actually used for the chosen --format.
 		// Print a warning but continue.
@@ -490,7 +492,7 @@ func (a *AuthCommand) checkLeafCluster(clusterAPI auth.ClientI) error {
 
 }
 
-func (a *AuthCommand) checkKubeCluster(clusterAPI auth.ClientI) error {
+func (a *AuthCommand) checkKubeCluster(clusterAPI authclient.ClientI) error {
 	if a.outputFormat != identityfile.FormatKubernetes && a.kubeCluster != "" {
 		// User set --kube-cluster-name but it's not actually used for the chosen --format.
 		// Print a warning but continue.
@@ -517,7 +519,7 @@ func (a *AuthCommand) checkKubeCluster(clusterAPI auth.ClientI) error {
 	return nil
 }
 
-func (a *AuthCommand) checkProxyAddr(clusterAPI auth.ClientI) error {
+func (a *AuthCommand) checkProxyAddr(clusterAPI authclient.ClientI) error {
 	if a.outputFormat != identityfile.FormatKubernetes && a.proxyAddr != "" {
 		// User set --proxy but it's not actually used for the chosen --format.
 		// Print a warning but continue.
@@ -586,8 +588,8 @@ func userCAFormat(ca services.CertAuthority, keyBytes []byte) (string, error) {
 //    @cert-authority *.cluster-a ssh-rsa AAA... type=host
 //
 // URL encoding is used to pass the CA type and allowed logins into the comment field.
-func hostCAFormat(ca services.CertAuthority, keyBytes []byte, client auth.ClientI) (string, error) {
-	roles, err := services.FetchRoles(ca.GetRoles(), client, nil)
+func hostCAFormat(ca services.CertAuthority, keyBytes []byte, client authclient.ClientI) (string, error) {
+	roles, err := auth.FetchRoles(ca.GetRoles(), client, nil)
 	if err != nil {
 		return "", trace.Wrap(err)
 	}

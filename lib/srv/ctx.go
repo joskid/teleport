@@ -144,7 +144,7 @@ type IdentityContext struct {
 
 	// RoleSet is the roles this Teleport user is associated with. RoleSet is
 	// used to check RBAC permissions.
-	RoleSet services.RoleSet
+	RoleSet auth.RoleSet
 
 	// CertValidBefore is set to the expiry time of a certificate, or
 	// empty, if cert does not expire
@@ -542,7 +542,7 @@ func (c *ServerContext) reportStats(conn utils.Stater) {
 	if c.GetServer().Component() == teleport.ComponentProxy {
 		return
 	}
-	if services.IsRecordAtProxy(c.ClusterConfig.GetSessionRecording()) &&
+	if auth.IsRecordAtProxy(c.ClusterConfig.GetSessionRecording()) &&
 		c.GetServer().Component() == teleport.ComponentNode {
 		return
 	}

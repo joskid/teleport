@@ -34,6 +34,7 @@ import (
 
 	"github.com/gravitational/teleport"
 	"github.com/gravitational/teleport/lib"
+	"github.com/gravitational/teleport/lib/auth"
 	"github.com/gravitational/teleport/lib/auth/testauthority"
 	"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/httplib/csrf"
@@ -489,7 +490,7 @@ func (p *pack) createUser(t *testing.T) {
 	user, err := services.NewUser(p.username)
 	require.NoError(t, err)
 
-	role := services.RoleForUser(user)
+	role := auth.RoleForUser(user)
 	role.SetLogins(services.Allow, []string{p.username})
 	err = p.rootCluster.Process.GetAuthServer().UpsertRole(context.Background(), role)
 	require.NoError(t, err)

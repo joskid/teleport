@@ -18,7 +18,7 @@ limitations under the License.
 package sshca
 
 import (
-	"github.com/gravitational/teleport/lib/services"
+	"github.com/gravitational/teleport/lib/auth"
 )
 
 // Authority implements minimal key-management facility for generating OpenSSH
@@ -33,11 +33,11 @@ type Authority interface {
 	// GenerateHostCert takes the private key of the CA, public key of the new host,
 	// along with metadata (host ID, node name, cluster name, roles, and ttl) and generates
 	// a host certificate.
-	GenerateHostCert(certParams services.HostCertParams) ([]byte, error)
+	GenerateHostCert(certParams auth.HostCertParams) ([]byte, error)
 
 	// GenerateUserCert generates user certificate, it takes pkey as a signing
 	// private key (user certificate authority)
-	GenerateUserCert(certParams services.UserCertParams) ([]byte, error)
+	GenerateUserCert(certParams auth.UserCertParams) ([]byte, error)
 
 	// Close will close the key-management facility.
 	Close()

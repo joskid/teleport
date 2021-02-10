@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 
 	"github.com/gravitational/teleport"
+	"github.com/gravitational/teleport/lib/auth"
 	"github.com/gravitational/teleport/lib/defaults"
 	libevents "github.com/gravitational/teleport/lib/events"
 	"github.com/gravitational/teleport/lib/events/filesessions"
@@ -66,7 +67,7 @@ func (s *Server) newStreamWriter(sessionCtx *common.Session) (libevents.StreamWr
 // async streamer buffers the events to disk and uploads the events later
 func (s *Server) newStreamer(ctx context.Context, sessionID string, clusterConfig services.ClusterConfig) (libevents.Streamer, error) {
 	mode := clusterConfig.GetSessionRecording()
-	if services.IsRecordSync(mode) {
+	if auth.IsRecordSync(mode) {
 		s.log.Debugf("Using sync streamer for session %v.", sessionID)
 		return s.cfg.AuthClient, nil
 	}

@@ -31,7 +31,7 @@ import (
 
 	"github.com/gravitational/teleport"
 	"github.com/gravitational/teleport/api/types"
-	"github.com/gravitational/teleport/lib/auth"
+	"github.com/gravitational/teleport/lib/auth/server"
 	"github.com/gravitational/teleport/lib/backend"
 	"github.com/gravitational/teleport/lib/client"
 	"github.com/gravitational/teleport/lib/defaults"
@@ -132,13 +132,15 @@ func TestOIDCLogin(t *testing.T) {
 	require.NoError(t, err)
 
 	// build a mock SSO login function to patch into tsh
-	ssoLogin := func(ctx context.Context, connectorID string, pub []byte, protocol string) (*auth.SSHLoginResponse, error) {
+	ssoLogin := func(ctx context.Context, connectorID string, pub []byte, protocol string) (*server.SSHLoginResponse, error) {
 		// generate certificates for our user
-		sshCert, tlsCert, err := authServer.GenerateUserTestCerts(
-			pub, alice.GetName(), time.Hour,
-			teleport.CertificateFormatStandard,
-			"localhost",
-		)
+		sshCert, tlsCert, err := authServer.GenerateUserTestCerts(server.TestUserCertRequest{
+			Key:            pub,
+			User:           alice.GetName(),
+			TTL:            time.Hour,
+			Compatibility:  teleport.CertificateFormatStandard,
+			RouteToCluster: "localhost",
+		})
 		require.NoError(t, err)
 
 		// load CA cert
@@ -149,11 +151,11 @@ func TestOIDCLogin(t *testing.T) {
 		require.NoError(t, err)
 
 		// build login response
-		return &auth.SSHLoginResponse{
+		return &server.SSHLoginResponse{
 			Username:    alice.GetName(),
 			Cert:        sshCert,
 			TLSCert:     tlsCert,
-			HostSigners: auth.AuthoritiesToTrustedCerts([]services.CertAuthority{authority}),
+			HostSigners: server.AuthoritiesToTrustedCerts([]services.CertAuthority{authority}),
 		}, nil
 	}
 

@@ -27,8 +27,11 @@ import (
 
 	"github.com/gravitational/kingpin"
 	"github.com/gravitational/teleport"
+	apiclient "github.com/gravitational/teleport/api/client"
 	"github.com/gravitational/teleport/lib/asciitable"
 	"github.com/gravitational/teleport/lib/auth"
+	"github.com/gravitational/teleport/lib/auth/client"
+	authclient "github.com/gravitational/teleport/lib/auth/client"
 	"github.com/gravitational/teleport/lib/service"
 	"github.com/gravitational/teleport/lib/services"
 	"github.com/gravitational/trace"
@@ -99,7 +102,7 @@ func (c *AccessRequestCommand) Initialize(app *kingpin.Application, config *serv
 }
 
 // TryRun takes the CLI command as an argument (like "access-request list") and executes it.
-func (c *AccessRequestCommand) TryRun(cmd string, client auth.ClientI) (match bool, err error) {
+func (c *AccessRequestCommand) TryRun(cmd string, client client.ClientI) (match bool, err error) {
 	switch cmd {
 	case c.requestList.FullCommand():
 		err = c.List(client)
@@ -121,7 +124,7 @@ func (c *AccessRequestCommand) TryRun(cmd string, client auth.ClientI) (match bo
 	return true, trace.Wrap(err)
 }
 
-func (c *AccessRequestCommand) List(client auth.ClientI) error {
+func (c *AccessRequestCommand) List(client client.ClientI) error {
 	reqs, err := client.GetAccessRequests(context.TODO(), services.AccessRequestFilter{})
 	if err != nil {
 		return trace.Wrap(err)
@@ -144,7 +147,7 @@ func (c *AccessRequestCommand) List(client auth.ClientI) error {
 	return nil
 }
 
-func (c *AccessRequestCommand) Get(client auth.ClientI) error {
+func (c *AccessRequestCommand) Get(client client.ClientI) error {
 	ctx := context.TODO()
 	reqs := []services.AccessRequest{}
 	for _, reqID := range strings.Split(c.reqIDs, ",") {
@@ -200,10 +203,10 @@ func (c *AccessRequestCommand) splitRoles() []string {
 	return roles
 }
 
-func (c *AccessRequestCommand) Approve(client auth.ClientI) error {
+func (c *AccessRequestCommand) Approve(client client.ClientI) error {
 	ctx := context.TODO()
 	if c.delegator != "" {
-		ctx = auth.WithDelegator(ctx, c.delegator)
+		ctx = apiclient.WithDelegator(ctx, c.delegator)
 	}
 	annotations, err := c.splitAnnotations()
 	if err != nil {
@@ -223,10 +226,10 @@ func (c *AccessRequestCommand) Approve(client auth.ClientI) error {
 	return nil
 }
 
-func (c *AccessRequestCommand) Deny(client auth.ClientI) error {
+func (c *AccessRequestCommand) Deny(client client.ClientI) error {
 	ctx := context.TODO()
 	if c.delegator != "" {
-		ctx = auth.WithDelegator(ctx, c.delegator)
+		ctx = apiclient.WithDelegator(ctx, c.delegator)
 	}
 	annotations, err := c.splitAnnotations()
 	if err != nil {
@@ -245,15 +248,19 @@ func (c *AccessRequestCommand) Deny(client auth.ClientI) error {
 	return nil
 }
 
-func (c *AccessRequestCommand) Create(client auth.ClientI) error {
-	req, err := services.NewAccessRequest(c.user, c.splitRoles()...)
+func (c *AccessRequestCommand) Create(client authclient.ClientI) error {
+	roles := c.splitRoles()
+	if len(roles) == 0 {
+		return trace.BadParameter("need at least one role")
+	}
+	req, err := auth.NewAccessRequest(c.user, roles[0], roles[1:]...)
 	if err != nil {
 		return trace.Wrap(err)
 	}
 	req.SetRequestReason(c.reason)
 
 	if c.dryRun {
-		err = services.ValidateAccessRequestForUser(client, req, services.ExpandRoles(true), services.ApplySystemAnnotations(true))
+		err = auth.ValidateAccessRequestForUser(client, req, auth.ExpandRoles(true), auth.ApplySystemAnnotations(true))
 		if err != nil {
 			return trace.Wrap(err)
 		}
@@ -266,7 +273,7 @@ func (c *AccessRequestCommand) Create(client auth.ClientI) error {
 	return nil
 }
 
-func (c *AccessRequestCommand) Delete(client auth.ClientI) error {
+func (c *AccessRequestCommand) Delete(client client.ClientI) error {
 	for _, reqID := range strings.Split(c.reqIDs, ",") {
 		if err := client.DeleteAccessRequest(context.TODO(), reqID); err != nil {
 			return trace.Wrap(err)
@@ -275,7 +282,7 @@ func (c *AccessRequestCommand) Delete(client auth.ClientI) error {
 	return nil
 }
 
-func (c *AccessRequestCommand) Caps(client auth.ClientI) error {
+func (c *AccessRequestCommand) Caps(client client.ClientI) error {
 	caps, err := client.GetAccessCapabilities(context.TODO(), services.AccessCapabilitiesRequest{
 		User:             c.user,
 		RequestableRoles: true,

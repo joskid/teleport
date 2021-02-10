@@ -27,8 +27,9 @@ import (
 	"github.com/gravitational/teleport"
 	"github.com/gravitational/teleport/lib/auth"
 	"github.com/gravitational/teleport/lib/auth/native"
+	"github.com/gravitational/teleport/lib/auth/resource"
+	"github.com/gravitational/teleport/lib/auth/server"
 	"github.com/gravitational/teleport/lib/defaults"
-	"github.com/gravitational/teleport/lib/services"
 	"github.com/gravitational/teleport/lib/sshutils"
 	"github.com/gravitational/teleport/lib/tlsca"
 	"github.com/gravitational/teleport/lib/utils"
@@ -62,7 +63,7 @@ type Key struct {
 	ProxyHost string
 
 	// TrustedCA is a list of trusted certificate authorities
-	TrustedCA []auth.TrustedCerts
+	TrustedCA []server.TrustedCerts
 
 	// ClusterName is a cluster name this key is associated with
 	ClusterName string
@@ -194,7 +195,7 @@ func (k *Key) CertRoles() ([]string, error) {
 	var roles []string
 	rawRoles, ok := cert.Extensions[teleport.CertExtensionTeleportRoles]
 	if ok {
-		roles, err = services.UnmarshalCertRoles(rawRoles)
+		roles, err = resource.UnmarshalCertRoles(rawRoles)
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}

@@ -22,8 +22,8 @@ import (
 	"strings"
 
 	"github.com/gravitational/teleport/api/types"
+	authresource "github.com/gravitational/teleport/lib/auth/resource"
 	"github.com/gravitational/teleport/lib/httplib"
-	"github.com/gravitational/teleport/lib/services"
 	"github.com/gravitational/teleport/lib/web/ui"
 
 	"github.com/gravitational/trace"
@@ -93,7 +93,7 @@ func upsertRole(ctx context.Context, clt resourcesAPIGetter, content, httpMethod
 		return nil, trace.Wrap(err)
 	}
 
-	role, err := services.UnmarshalRole(extractedRes.Raw)
+	role, err := authresource.UnmarshalRole(extractedRes.Raw)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -166,7 +166,7 @@ func upsertGithubConnector(ctx context.Context, clt resourcesAPIGetter, content,
 		return nil, trace.Wrap(err)
 	}
 
-	connector, err := services.UnmarshalGithubConnector(extractedRes.Raw)
+	connector, err := authresource.UnmarshalGithubConnector(extractedRes.Raw)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -239,7 +239,7 @@ func upsertTrustedCluster(ctx context.Context, clt resourcesAPIGetter, content, 
 		return nil, trace.Wrap(err)
 	}
 
-	tc, err := services.UnmarshalTrustedCluster(extractedRes.Raw)
+	tc, err := authresource.UnmarshalTrustedCluster(extractedRes.Raw)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -272,8 +272,8 @@ func CheckResourceUpsertableByError(err error, httpMethod, resourceName string) 
 }
 
 // ExtractResourceAndValidate extracts resource information from given string and validates basic fields.
-func ExtractResourceAndValidate(yaml string) (*services.UnknownResource, error) {
-	var unknownRes services.UnknownResource
+func ExtractResourceAndValidate(yaml string) (*authresource.UnknownResource, error) {
+	var unknownRes authresource.UnknownResource
 	reader := strings.NewReader(yaml)
 	decoder := kyaml.NewYAMLOrJSONDecoder(reader, 32*1024)
 

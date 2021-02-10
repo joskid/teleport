@@ -25,6 +25,9 @@ import (
 
 	"github.com/gravitational/teleport"
 	"github.com/gravitational/teleport/lib/auth"
+	authclient "github.com/gravitational/teleport/lib/auth/client"
+	"github.com/gravitational/teleport/lib/auth/server"
+	test "github.com/gravitational/teleport/lib/auth/test/services"
 	"github.com/gravitational/teleport/lib/bpf"
 	"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/pam"
@@ -52,10 +55,10 @@ var wildcardAllow = services.Labels{
 type SrvCtx struct {
 	srv        *regular.Server
 	signer     ssh.Signer
-	server     *auth.TestTLSServer
-	testServer *auth.TestAuthServer
+	server     *test.TLSServer
+	testServer *test.AuthServer
 	clock      clockwork.FakeClock
-	nodeClient *auth.Client
+	nodeClient *authclient.Client
 	nodeID     string
 	utmpPath   string
 }
@@ -163,18 +166,18 @@ func newSrvCtx(t *testing.T) *SrvCtx {
 	s.clock = clockwork.NewFakeClock()
 	tempdir := t.TempDir()
 
-	authServer, err := auth.NewTestAuthServer(auth.TestAuthServerConfig{
+	authServer, err := test.NewAuthServer(test.AuthServerConfig{
 		ClusterName: "localhost",
 		Dir:         tempdir,
 		Clock:       s.clock,
 	})
 	require.NoError(t, err)
-	s.server, err = authServer.NewTestTLSServer()
+	s.server, err = authServer.NewTLSServer()
 	require.NoError(t, err)
 	s.testServer = authServer
 
 	// set up host private key and certificate
-	certs, err := s.server.Auth().GenerateServerKeys(auth.GenerateServerKeysRequest{
+	certs, err := s.server.Auth().GenerateServerKeys(server.GenerateServerKeysRequest{
 		HostID:   hostID,
 		NodeName: s.server.ClusterName(),
 		Roles:    teleport.Roles{teleport.RoleNode},
@@ -186,8 +189,8 @@ func newSrvCtx(t *testing.T) *SrvCtx {
 	require.NoError(t, err)
 
 	s.nodeID = uuid.New()
-	s.nodeClient, err = s.server.NewClient(auth.TestIdentity{
-		I: auth.BuiltinRole{
+	s.nodeClient, err = s.server.NewClient(test.Identity{
+		I: server.BuiltinRole{
 			Role:     teleport.RoleNode,
 			Username: s.nodeID,
 		},
@@ -232,15 +235,15 @@ func newSrvCtx(t *testing.T) *SrvCtx {
 	)
 	require.NoError(t, err)
 	s.srv = srv
-	require.NoError(t, auth.CreateUploaderDir(nodeDir))
+	require.NoError(t, test.CreateUploaderDir(nodeDir))
 	require.NoError(t, s.srv.Start())
 	return s
 }
 
 func newUpack(s *SrvCtx, username string, allowedLogins []string, allowedLabels services.Labels) (*upack, error) {
 	ctx := context.Background()
-	auth := s.server.Auth()
-	upriv, upub, err := auth.GenerateKeyPair("")
+	authServer := s.server.Auth()
+	upriv, upub, err := authServer.GenerateKeyPair("")
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -248,21 +251,21 @@ func newUpack(s *SrvCtx, username string, allowedLogins []string, allowedLabels 
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
-	role := services.RoleForUser(user)
+	role := auth.RoleForUser(user)
 	rules := role.GetRules(services.Allow)
-	rules = append(rules, services.NewRule(services.Wildcard, services.RW()))
+	rules = append(rules, services.NewRule(services.Wildcard, auth.RW()))
 	role.SetRules(services.Allow, rules)
 	opts := role.GetOptions()
 	opts.PermitX11Forwarding = services.NewBool(true)
 	role.SetOptions(opts)
 	role.SetLogins(services.Allow, allowedLogins)
 	role.SetNodeLabels(services.Allow, allowedLabels)
-	err = auth.UpsertRole(ctx, role)
+	err = authServer.UpsertRole(ctx, role)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
 	user.AddRole(role.GetName())
-	err = auth.UpsertUser(user)
+	err = authServer.UpsertUser(user)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}

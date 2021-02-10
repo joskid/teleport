@@ -33,6 +33,8 @@ import (
 
 	"github.com/gravitational/teleport"
 	"github.com/gravitational/teleport/lib/auth"
+	"github.com/gravitational/teleport/lib/auth/client"
+	"github.com/gravitational/teleport/lib/auth/server"
 	"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/events"
 	"github.com/gravitational/teleport/lib/events/filesessions"
@@ -71,9 +73,9 @@ type ForwarderConfig struct {
 	// Keygen points to a key generator implementation
 	Keygen sshca.Authority
 	// Authz authenticates user
-	Authz auth.Authorizer
+	Authz server.Authorizer
 	// AuthClient is a auth server client.
-	AuthClient auth.ClientI
+	AuthClient client.ClientI
 	// CachingAuthClient is a caching auth server client for read-only access.
 	CachingAuthClient auth.AccessPoint
 	// StreamEmitter is used to create audit streams
@@ -252,7 +254,7 @@ func (f *Forwarder) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 // authContext is a context of authenticated user,
 // contains information about user, target cluster and authenticated groups
 type authContext struct {
-	auth.Context
+	server.Context
 	kubeGroups      map[string]struct{}
 	kubeUsers       map[string]struct{}
 	kubeCluster     string
@@ -320,13 +322,13 @@ func (f *Forwarder) authenticate(req *http.Request) (*authContext, error) {
 	const accessDeniedMsg = "[00] access denied"
 
 	var isRemoteUser bool
-	userTypeI := req.Context().Value(auth.ContextUser)
+	userTypeI := req.Context().Value(server.ContextUser)
 	switch userTypeI.(type) {
-	case auth.LocalUser:
+	case server.LocalUser:
 
-	case auth.RemoteUser:
+	case server.RemoteUser:
 		isRemoteUser = true
-	case auth.BuiltinRole:
+	case server.BuiltinRole:
 		f.log.Warningf("Denying proxy access to unauthenticated user of type %T - this can sometimes be caused by inadvertently using an HTTP load balancer instead of a TCP load balancer on the Kubernetes port.", userTypeI)
 		return nil, trace.AccessDenied(accessDeniedMsg)
 	default:
@@ -427,7 +429,7 @@ func (f *Forwarder) formatResponseError(rw http.ResponseWriter, respErr error) {
 	}
 }
 
-func (f *Forwarder) setupContext(ctx auth.Context, req *http.Request, isRemoteUser bool, certExpires time.Time) (*authContext, error) {
+func (f *Forwarder) setupContext(ctx server.Context, req *http.Request, isRemoteUser bool, certExpires time.Time) (*authContext, error) {
 	roles := ctx.Checker
 
 	clusterConfig, err := f.cfg.CachingAuthClient.GetClusterConfig()
@@ -613,7 +615,7 @@ func (f *Forwarder) authorize(ctx context.Context, actx *authContext) error {
 // async streamer buffers the events to disk and uploads the events later
 func (f *Forwarder) newStreamer(ctx *authContext) (events.Streamer, error) {
 	mode := ctx.clusterConfig.GetSessionRecording()
-	if services.IsRecordSync(mode) {
+	if auth.IsRecordSync(mode) {
 		f.log.Debugf("Using sync streamer for session.")
 		return f.cfg.AuthClient, nil
 	}
@@ -1632,7 +1634,7 @@ func (f *Forwarder) requestCertificate(ctx authContext) (*tls.Config, error) {
 	}
 	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrBytes})
 
-	response, err := f.cfg.AuthClient.ProcessKubeCSR(auth.KubeCSR{
+	response, err := f.cfg.AuthClient.ProcessKubeCSR(server.KubeCSR{
 		Username:    ctx.User.GetName(),
 		ClusterName: ctx.teleportCluster.name,
 		CSR:         csrPEM,

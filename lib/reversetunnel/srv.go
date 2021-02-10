@@ -29,6 +29,8 @@ import (
 	"github.com/gravitational/teleport"
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/teleport/lib/auth"
+	"github.com/gravitational/teleport/lib/auth/client"
+	"github.com/gravitational/teleport/lib/auth/resource"
 	"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/events"
 	"github.com/gravitational/teleport/lib/limiter"
@@ -76,7 +78,7 @@ type server struct {
 
 	// localAuthClient provides access to the full Auth Server API for the
 	// local cluster.
-	localAuthClient auth.ClientI
+	localAuthClient client.ClientI
 	// localAccessPoint provides access to a cached subset of the Auth
 	// Server API.
 	localAccessPoint auth.AccessPoint
@@ -97,7 +99,7 @@ type server struct {
 	clusterPeers map[string]*clusterPeers
 
 	// newAccessPoint returns new caching access point
-	newAccessPoint auth.NewCachingAccessPoint
+	newAccessPoint client.NewCachingAccessPoint
 
 	// cancel function will cancel the
 	cancel context.CancelFunc
@@ -110,7 +112,7 @@ type server struct {
 
 	// proxyWatcher monitors changes to the proxies
 	// and broadcasts updates
-	proxyWatcher *services.ProxyWatcher
+	proxyWatcher *auth.ProxyWatcher
 
 	// offlineThreshold is how long to wait for a keep alive message before
 	// marking a reverse tunnel connection as invalid.
@@ -122,7 +124,7 @@ type DirectCluster struct {
 	// Name is a cluster name
 	Name string
 	// Client is a client to the cluster
-	Client auth.ClientI
+	Client client.ClientI
 }
 
 // Config is a reverse tunnel server configuration
@@ -142,14 +144,14 @@ type Config struct {
 	// Limiter is optional request limiter
 	Limiter *limiter.Limiter
 	// LocalAuthClient provides access to a full AuthClient for the local cluster.
-	LocalAuthClient auth.ClientI
+	LocalAuthClient client.ClientI
 	// AccessPoint provides access to a subset of AuthClient of the cluster.
 	// AccessPoint caches values and can still return results during connection
 	// problems.
 	LocalAccessPoint auth.AccessPoint
 	// NewCachingAccessPoint returns new caching access points
 	// per remote cluster
-	NewCachingAccessPoint auth.NewCachingAccessPoint
+	NewCachingAccessPoint client.NewCachingAccessPoint
 	// DirectClusters is a list of clusters accessed directly
 	DirectClusters []DirectCluster
 	// Context is a signalling context
@@ -198,7 +200,7 @@ type Config struct {
 	//
 	// Pass in a access point that can be configured with the old access point
 	// policy until all clusters are migrated to 5.0 and above.
-	NewCachingAccessPointOldProxy auth.NewCachingAccessPoint
+	NewCachingAccessPointOldProxy client.NewCachingAccessPoint
 }
 
 // CheckAndSetDefaults checks parameters and sets default values
@@ -265,7 +267,7 @@ func NewServer(cfg Config) (Server, error) {
 
 	ctx, cancel := context.WithCancel(cfg.Context)
 
-	proxyWatcher, err := services.NewProxyWatcher(services.ProxyWatcherConfig{
+	proxyWatcher, err := auth.NewProxyWatcher(auth.ProxyWatcherConfig{
 		Context:   ctx,
 		Component: cfg.Component,
 		Client:    cfg.LocalAuthClient,
@@ -700,7 +702,7 @@ func (s *server) findLocalCluster(sconn *ssh.ServerConn) (*localSite, error) {
 }
 
 func (s *server) getTrustedCAKeysByID(id services.CertAuthID) ([]ssh.PublicKey, error) {
-	ca, err := s.localAccessPoint.GetCertAuthority(id, false, services.SkipValidation())
+	ca, err := s.localAccessPoint.GetCertAuthority(id, false, resource.SkipValidation())
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -750,7 +752,7 @@ func (s *server) keyAuth(conn ssh.ConnMetadata, key ssh.PublicKey) (perm *ssh.Pe
 		if !ok || encRoles == "" {
 			return nil, trace.BadParameter("certificate missing %q extension; this SSH user certificate was not issued by Teleport or issued by an older version of Teleport; try upgrading your Teleport proxies/auth servers and logging in again (or exporting an identity file, if that's what you used)", teleport.CertExtensionTeleportRoles)
 		}
-		roles, err := services.UnmarshalCertRoles(encRoles)
+		roles, err := resource.UnmarshalCertRoles(encRoles)
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}
@@ -1017,7 +1019,7 @@ func newRemoteSite(srv *server, domainName string, sconn ssh.Conn) (*remoteSite,
 	// Check if the cluster that is connecting is an older cluster. If it is,
 	// don't request access to application servers because older servers policy
 	// will reject that causing the cache to go into a re-sync loop.
-	var accessPointFunc auth.NewCachingAccessPoint
+	var accessPointFunc client.NewCachingAccessPoint
 	ok, err := isOldCluster(closeContext, sconn)
 	if err != nil {
 		return nil, trace.Wrap(err)

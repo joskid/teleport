@@ -38,6 +38,8 @@ import (
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/teleport/lib/asciitable"
 	"github.com/gravitational/teleport/lib/auth"
+	authclient "github.com/gravitational/teleport/lib/auth/client"
+	"github.com/gravitational/teleport/lib/auth/server"
 	"github.com/gravitational/teleport/lib/backend"
 	"github.com/gravitational/teleport/lib/benchmark"
 	"github.com/gravitational/teleport/lib/client"
@@ -674,7 +676,7 @@ func onLogin(cf *CLIConf) error {
 		if err != nil {
 			return trace.Wrap(err)
 		}
-		key.TrustedCA = auth.AuthoritiesToTrustedCerts(authorities)
+		key.TrustedCA = server.AuthoritiesToTrustedCerts(authorities)
 
 		filesWritten, err := identityfile.Write(identityfile.WriteConfig{
 			OutputPath:           cf.IdentityFileOut,
@@ -715,7 +717,7 @@ func onLogin(cf *CLIConf) error {
 		// load all roles from root cluster and collect relevant options.
 		// the normal one-off TeleportClient methods don't re-use the auth server
 		// connection, so we use WithRootClusterClient to speed things up.
-		err = tc.WithRootClusterClient(cf.Context, func(clt auth.ClientI) error {
+		err = tc.WithRootClusterClient(cf.Context, func(clt authclient.ClientI) error {
 			for _, roleName := range roleNames {
 				role, err := clt.GetRole(cf.Context, roleName)
 				if err != nil {
@@ -1004,7 +1006,7 @@ func executeAccessRequest(cf *CLIConf) error {
 	if cf.Username == "" {
 		cf.Username = tc.Username
 	}
-	req, err := services.NewAccessRequest(cf.Username, roles...)
+	req, err := auth.NewAccessRequest(cf.Username, roles[0], roles[1:]...)
 	if err != nil {
 		return trace.Wrap(err)
 	}
@@ -1013,7 +1015,7 @@ func executeAccessRequest(cf *CLIConf) error {
 
 	var res services.AccessRequest
 	// always create access request against the root cluster
-	err = tc.WithRootClusterClient(cf.Context, func(clt auth.ClientI) error {
+	err = tc.WithRootClusterClient(cf.Context, func(clt authclient.ClientI) error {
 		res, err = getRequestResolution(cf, clt, req)
 		return trace.Wrap(err)
 	})
@@ -1830,7 +1832,7 @@ func host(in string) string {
 }
 
 // getRequestResolution registers an access request with the auth server and waits for it to be resolved.
-func getRequestResolution(cf *CLIConf, clt auth.ClientI, req services.AccessRequest) (services.AccessRequest, error) {
+func getRequestResolution(cf *CLIConf, clt authclient.ClientI, req services.AccessRequest) (services.AccessRequest, error) {
 	// set up request watcher before submitting the request to the admin server
 	// in order to avoid potential race.
 	filter := services.AccessRequestFilter{

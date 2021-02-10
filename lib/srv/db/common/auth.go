@@ -23,7 +23,7 @@ import (
 	"crypto/x509/pkix"
 
 	"github.com/gravitational/teleport/api/client/proto"
-	"github.com/gravitational/teleport/lib/auth"
+	"github.com/gravitational/teleport/lib/auth/client"
 	"github.com/gravitational/teleport/lib/auth/native"
 	"github.com/gravitational/teleport/lib/tlsca"
 	"github.com/gravitational/teleport/lib/utils"
@@ -38,7 +38,7 @@ import (
 // AuthConfig is the database access authenticator configuration.
 type AuthConfig struct {
 	// AuthClient is the cluster auth client.
-	AuthClient *auth.Client
+	AuthClient *client.Client
 	// Credentials are the AWS credentials used to generate RDS auth tokens.
 	Credentials *credentials.Credentials
 	// RDSCACerts contains AWS RDS root certificates.

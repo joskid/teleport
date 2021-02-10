@@ -18,14 +18,13 @@ package reversetunnel
 
 import (
 	"github.com/gravitational/teleport/lib/auth"
-	"github.com/gravitational/teleport/lib/services"
 	"github.com/gravitational/teleport/lib/utils"
 
 	"github.com/gravitational/trace"
 )
 
 // NewTunnelWithRoles returns new authorizing tunnel
-func NewTunnelWithRoles(tunnel Tunnel, roles services.RoleSet, ap auth.AccessPoint) *TunnelWithRoles {
+func NewTunnelWithRoles(tunnel Tunnel, roles auth.RoleSet, ap auth.AccessPoint) *TunnelWithRoles {
 	return &TunnelWithRoles{
 		tunnel: tunnel,
 		roles:  roles,
@@ -38,7 +37,7 @@ type TunnelWithRoles struct {
 	tunnel Tunnel
 
 	// roles is a set of roles used to check RBAC permissions.
-	roles services.RoleSet
+	roles auth.RoleSet
 
 	ap auth.AccessPoint
 }

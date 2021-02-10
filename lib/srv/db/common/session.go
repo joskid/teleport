@@ -20,7 +20,7 @@ import (
 	"fmt"
 
 	"github.com/gravitational/teleport/api/types"
-	"github.com/gravitational/teleport/lib/services"
+	"github.com/gravitational/teleport/lib/auth"
 	"github.com/gravitational/teleport/lib/tlsca"
 
 	"github.com/sirupsen/logrus"
@@ -37,7 +37,7 @@ type Session struct {
 	// Identity is the identity of the connecting Teleport user.
 	Identity tlsca.Identity
 	// Checker is the access checker for the identity.
-	Checker services.AccessChecker
+	Checker auth.AccessChecker
 	// DatabaseUser is the requested database user.
 	DatabaseUser string
 	// DatabaseName is the requested database name.

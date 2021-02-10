@@ -29,7 +29,9 @@ import (
 	"github.com/gravitational/teleport/api/client/proto"
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/teleport/lib/auth"
+	"github.com/gravitational/teleport/lib/auth/client"
 	"github.com/gravitational/teleport/lib/auth/native"
+	"github.com/gravitational/teleport/lib/auth/server"
 	"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/multiplexer"
 	"github.com/gravitational/teleport/lib/reversetunnel"
@@ -50,7 +52,7 @@ type ProxyServer struct {
 	// cfg is the proxy server configuration.
 	cfg ProxyServerConfig
 	// middleware extracts identity information from client certificates.
-	middleware *auth.Middleware
+	middleware *server.Middleware
 	// closeCtx is closed when the process shuts down.
 	closeCtx context.Context
 	// log is used for logging.
@@ -60,11 +62,11 @@ type ProxyServer struct {
 // ProxyServerConfig is the proxy configuration.
 type ProxyServerConfig struct {
 	// AuthClient is the authenticated client to the auth server.
-	AuthClient *auth.Client
+	AuthClient *client.Client
 	// AccessPoint is the caching client connected to the auth server.
 	AccessPoint auth.AccessPoint
 	// Authorizer is responsible for authorizing user identities.
-	Authorizer auth.Authorizer
+	Authorizer server.Authorizer
 	// Tunnel is the reverse tunnel server.
 	Tunnel reversetunnel.Server
 	// TLSConfig is the proxy server TLS configuration.
@@ -98,7 +100,7 @@ func NewProxyServer(ctx context.Context, config ProxyServerConfig) (*ProxyServer
 	}
 	server := &ProxyServer{
 		cfg: config,
-		middleware: &auth.Middleware{
+		middleware: &server.Middleware{
 			AccessPoint: config.AccessPoint,
 		},
 		closeCtx: ctx,
@@ -381,7 +383,7 @@ func getConfigForClient(conf *tls.Config, ap auth.AccessPoint, log logrus.FieldL
 				log.Debugf("Ignoring unsupported cluster name %q.", info.ServerName)
 			}
 		}
-		pool, err := auth.ClientCertPool(ap, clusterName)
+		pool, err := server.ClientCertPool(ap, clusterName)
 		if err != nil {
 			log.WithError(err).Error("Failed to retrieve client CA pool.")
 			return nil, nil // Fall back to the default config.

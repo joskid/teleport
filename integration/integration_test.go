@@ -46,6 +46,9 @@ import (
 	"github.com/gravitational/teleport"
 	"github.com/gravitational/teleport/lib"
 	"github.com/gravitational/teleport/lib/auth"
+	authclient "github.com/gravitational/teleport/lib/auth/client"
+	"github.com/gravitational/teleport/lib/auth/resource"
+	"github.com/gravitational/teleport/lib/auth/server"
 	"github.com/gravitational/teleport/lib/auth/testauthority"
 	"github.com/gravitational/teleport/lib/bpf"
 	"github.com/gravitational/teleport/lib/client"
@@ -344,13 +347,13 @@ func (s *IntSuite) TestAuditOn(c *check.C) {
 
 		// wait 10 seconds for both nodes to show up, otherwise
 		// we'll have trouble connecting to the node below.
-		waitForNodes := func(site auth.ClientI, count int) error {
+		waitForNodes := func(site authclient.ClientI, count int) error {
 			tickCh := time.Tick(500 * time.Millisecond)
 			stopCh := time.After(10 * time.Second)
 			for {
 				select {
 				case <-tickCh:
-					nodesInSite, err := site.GetNodes(defaults.Namespace, services.SkipValidation())
+					nodesInSite, err := site.GetNodes(defaults.Namespace, resource.SkipValidation())
 					if err != nil && !trace.IsNotFound(err) {
 						return trace.Wrap(err)
 					}
@@ -389,7 +392,7 @@ func (s *IntSuite) TestAuditOn(c *check.C) {
 		}()
 
 		// wait until we've found the session in the audit log
-		getSession := func(site auth.ClientI) (*session.Session, error) {
+		getSession := func(site authclient.ClientI) (*session.Session, error) {
 			tickCh := time.Tick(500 * time.Millisecond)
 			stopCh := time.After(10 * time.Second)
 			for {
@@ -477,7 +480,7 @@ func (s *IntSuite) TestAuditOn(c *check.C) {
 		c.Assert(strings.Contains(string(sessionStream), "exit"), check.Equals, true, sessionComment)
 
 		// Wait until session.start, session.leave, and session.end events have arrived.
-		getSessions := func(site auth.ClientI) ([]events.EventFields, error) {
+		getSessions := func(site authclient.ClientI) ([]events.EventFields, error) {
 			tickCh := time.Tick(500 * time.Millisecond)
 			stopCh := time.After(10 * time.Second)
 			for {
@@ -550,7 +553,7 @@ func (s *IntSuite) TestAuditOn(c *check.C) {
 		// the ID of the node. If sessions are being recorded at the proxy, then
 		// SessionServerID should be that of the proxy.
 		expectedServerID := nodeProcess.Config.HostUUID
-		if services.IsRecordAtProxy(tt.inRecordLocation) {
+		if auth.IsRecordAtProxy(tt.inRecordLocation) {
 			expectedServerID = t.Process.Config.HostUUID
 		}
 		c.Assert(start.GetString(events.SessionServerID), check.Equals, expectedServerID, comment)
@@ -719,7 +722,7 @@ func (s *IntSuite) TestUUIDBasedProxy(c *check.C) {
 	c.Assert(err, check.IsNil)
 
 	// wait up to 10 seconds for supplied node names to show up.
-	waitForNodes := func(site auth.ClientI, nodes ...string) error {
+	waitForNodes := func(site authclient.ClientI, nodes ...string) error {
 		tickCh := time.Tick(500 * time.Millisecond)
 		stopCh := time.After(10 * time.Second)
 	Outer:
@@ -727,7 +730,7 @@ func (s *IntSuite) TestUUIDBasedProxy(c *check.C) {
 			for {
 				select {
 				case <-tickCh:
-					nodesInSite, err := site.GetNodes(defaults.Namespace, services.SkipValidation())
+					nodesInSite, err := site.GetNodes(defaults.Namespace, resource.SkipValidation())
 					if err != nil && !trace.IsNotFound(err) {
 						return trace.Wrap(err)
 					}
@@ -1425,7 +1428,7 @@ func (s *IntSuite) twoClustersTunnel(c *check.C, now time.Time, proxyRecordMode 
 	}
 	c.Assert(err, check.IsNil)
 
-	searchAndAssert := func(site auth.ClientI, count int) error {
+	searchAndAssert := func(site authclient.ClientI, count int) error {
 		tickCh := time.Tick(500 * time.Millisecond)
 		stopCh := time.After(5 * time.Second)
 
@@ -1664,7 +1667,7 @@ func (s *IntSuite) TestMapRoles(c *check.C) {
 	c.Assert(err, check.IsNil)
 	trustedClusterToken := "trusted-cluster-token"
 	err = main.Process.GetAuthServer().UpsertToken(
-		services.MustCreateProvisionToken(trustedClusterToken, []teleport.Role{teleport.RoleTrustedCluster}, time.Time{}))
+		auth.MustCreateProvisionToken(trustedClusterToken, []teleport.Role{teleport.RoleTrustedCluster}, time.Time{}))
 	c.Assert(err, check.IsNil)
 	trustedCluster := main.Secrets.AsTrustedCluster(trustedClusterToken, services.RoleMap{
 		{Remote: mainDevs, Local: []string{auxDevs}},
@@ -1701,7 +1704,7 @@ func (s *IntSuite) TestMapRoles(c *check.C) {
 	// correct nodes that identity aware GetNodes is done in TestList.
 	var nodes []services.Server
 	for i := 0; i < 10; i++ {
-		nodes, err = aux.Process.GetAuthServer().GetNodes(defaults.Namespace, services.SkipValidation())
+		nodes, err = aux.Process.GetAuthServer().GetNodes(defaults.Namespace, resource.SkipValidation())
 		c.Assert(err, check.IsNil)
 		if len(nodes) != 2 {
 			time.Sleep(100 * time.Millisecond)
@@ -1811,7 +1814,7 @@ func (s *IntSuite) TestMapRoles(c *check.C) {
 // tryCreateTrustedCluster performs several attempts to create a trusted cluster,
 // retries on connection problems and access denied errors to let caches
 // propagate and services to start
-func tryCreateTrustedCluster(c *check.C, authServer *auth.Server, trustedCluster services.TrustedCluster) {
+func tryCreateTrustedCluster(c *check.C, authServer *server.Server, trustedCluster services.TrustedCluster) {
 	ctx := context.TODO()
 	for i := 0; i < 10; i++ {
 		log.Debugf("Will create trusted cluster %v, attempt %v.", trustedCluster, i)
@@ -2203,7 +2206,7 @@ func (s *IntSuite) TestTrustedTunnelNode(c *check.C) {
 	c.Assert(err, check.IsNil)
 	trustedClusterToken := "trusted-cluster-token"
 	err = main.Process.GetAuthServer().UpsertToken(
-		services.MustCreateProvisionToken(trustedClusterToken, []teleport.Role{teleport.RoleTrustedCluster}, time.Time{}))
+		auth.MustCreateProvisionToken(trustedClusterToken, []teleport.Role{teleport.RoleTrustedCluster}, time.Time{}))
 	c.Assert(err, check.IsNil)
 	trustedCluster := main.Secrets.AsTrustedCluster(trustedClusterToken, services.RoleMap{
 		{Remote: mainDevs, Local: []string{auxDevs}},
@@ -2780,7 +2783,7 @@ func waitForNodeCount(t *TeleInstance, clusterName string, count int) error {
 }
 
 // waitForTunnelConnections waits for remote tunnels connections
-func waitForTunnelConnections(c *check.C, authServer *auth.Server, clusterName string, expectedCount int) {
+func waitForTunnelConnections(c *check.C, authServer *server.Server, clusterName string, expectedCount int) {
 	var conns []services.TunnelConnection
 	for i := 0; i < 30; i++ {
 		conns, err := authServer.Presence.GetTunnelConnections(clusterName)
@@ -3383,7 +3386,7 @@ func (s *IntSuite) TestRotateSuccess(c *check.C) {
 	c.Logf("Service started. Setting rotation state to %v", services.RotationPhaseUpdateClients)
 
 	// start rotation
-	err = svc.GetAuthServer().RotateCertAuthority(auth.RotateRequest{
+	err = svc.GetAuthServer().RotateCertAuthority(server.RotateRequest{
 		TargetPhase: services.RotationPhaseInit,
 		Mode:        services.RotationModeManual,
 	})
@@ -3391,14 +3394,14 @@ func (s *IntSuite) TestRotateSuccess(c *check.C) {
 
 	hostCA, err := svc.GetAuthServer().GetCertAuthority(services.CertAuthID{Type: services.HostCA, DomainName: Site}, false)
 	c.Assert(err, check.IsNil)
-	c.Logf("Cert authority: %v", auth.CertAuthorityInfo(hostCA))
+	c.Logf("Cert authority: %v", server.CertAuthorityInfo(hostCA))
 
 	// wait until service phase update to be broadcasted (init phase does not trigger reload)
 	err = waitForProcessEvent(svc, service.TeleportPhaseChangeEvent, 10*time.Second)
 	c.Assert(err, check.IsNil)
 
 	// update clients
-	err = svc.GetAuthServer().RotateCertAuthority(auth.RotateRequest{
+	err = svc.GetAuthServer().RotateCertAuthority(server.RotateRequest{
 		TargetPhase: services.RotationPhaseUpdateClients,
 		Mode:        services.RotationModeManual,
 	})
@@ -3424,7 +3427,7 @@ func (s *IntSuite) TestRotateSuccess(c *check.C) {
 	c.Logf("Service reloaded. Setting rotation state to %v", services.RotationPhaseUpdateServers)
 
 	// move to the next phase
-	err = svc.GetAuthServer().RotateCertAuthority(auth.RotateRequest{
+	err = svc.GetAuthServer().RotateCertAuthority(server.RotateRequest{
 		TargetPhase: services.RotationPhaseUpdateServers,
 		Mode:        services.RotationModeManual,
 	})
@@ -3432,7 +3435,7 @@ func (s *IntSuite) TestRotateSuccess(c *check.C) {
 
 	hostCA, err = svc.GetAuthServer().GetCertAuthority(services.CertAuthID{Type: services.HostCA, DomainName: Site}, false)
 	c.Assert(err, check.IsNil)
-	c.Logf("Cert authority: %v", auth.CertAuthorityInfo(hostCA))
+	c.Logf("Cert authority: %v", server.CertAuthorityInfo(hostCA))
 
 	// wait until service reloaded
 	svc, err = s.waitForReload(serviceC, svc)
@@ -3453,7 +3456,7 @@ func (s *IntSuite) TestRotateSuccess(c *check.C) {
 	c.Logf("Service reloaded. Setting rotation state to %v.", services.RotationPhaseStandby)
 
 	// complete rotation
-	err = svc.GetAuthServer().RotateCertAuthority(auth.RotateRequest{
+	err = svc.GetAuthServer().RotateCertAuthority(server.RotateRequest{
 		TargetPhase: services.RotationPhaseStandby,
 		Mode:        services.RotationModeManual,
 	})
@@ -3461,7 +3464,7 @@ func (s *IntSuite) TestRotateSuccess(c *check.C) {
 
 	hostCA, err = svc.GetAuthServer().GetCertAuthority(services.CertAuthID{Type: services.HostCA, DomainName: Site}, false)
 	c.Assert(err, check.IsNil)
-	c.Logf("Cert authority: %v", auth.CertAuthorityInfo(hostCA))
+	c.Logf("Cert authority: %v", server.CertAuthorityInfo(hostCA))
 
 	// wait until service reloaded
 	svc, err = s.waitForReload(serviceC, svc)
@@ -3534,7 +3537,7 @@ func (s *IntSuite) TestRotateRollback(c *check.C) {
 	c.Logf("Service started. Setting rotation state to %q.", services.RotationPhaseInit)
 
 	// start rotation
-	err = svc.GetAuthServer().RotateCertAuthority(auth.RotateRequest{
+	err = svc.GetAuthServer().RotateCertAuthority(server.RotateRequest{
 		TargetPhase: services.RotationPhaseInit,
 		Mode:        services.RotationModeManual,
 	})
@@ -3546,7 +3549,7 @@ func (s *IntSuite) TestRotateRollback(c *check.C) {
 	c.Logf("Setting rotation state to %q.", services.RotationPhaseUpdateClients)
 
 	// start rotation
-	err = svc.GetAuthServer().RotateCertAuthority(auth.RotateRequest{
+	err = svc.GetAuthServer().RotateCertAuthority(server.RotateRequest{
 		TargetPhase: services.RotationPhaseUpdateClients,
 		Mode:        services.RotationModeManual,
 	})
@@ -3571,7 +3574,7 @@ func (s *IntSuite) TestRotateRollback(c *check.C) {
 	c.Logf("Service reloaded. Setting rotation state to %q.", services.RotationPhaseUpdateServers)
 
 	// move to the next phase
-	err = svc.GetAuthServer().RotateCertAuthority(auth.RotateRequest{
+	err = svc.GetAuthServer().RotateCertAuthority(server.RotateRequest{
 		TargetPhase: services.RotationPhaseUpdateServers,
 		Mode:        services.RotationModeManual,
 	})
@@ -3584,7 +3587,7 @@ func (s *IntSuite) TestRotateRollback(c *check.C) {
 	c.Logf("Service reloaded. Setting rotation state to %q.", services.RotationPhaseRollback)
 
 	// complete rotation
-	err = svc.GetAuthServer().RotateCertAuthority(auth.RotateRequest{
+	err = svc.GetAuthServer().RotateCertAuthority(server.RotateRequest{
 		TargetPhase: services.RotationPhaseRollback,
 		Mode:        services.RotationModeManual,
 	})
@@ -3683,7 +3686,7 @@ func (s *IntSuite) TestRotateTrustedClusters(c *check.C) {
 	c.Assert(err, check.IsNil)
 	trustedClusterToken := "trusted-clsuter-token"
 	err = svc.GetAuthServer().UpsertToken(
-		services.MustCreateProvisionToken(trustedClusterToken, []teleport.Role{teleport.RoleTrustedCluster}, time.Time{}))
+		auth.MustCreateProvisionToken(trustedClusterToken, []teleport.Role{teleport.RoleTrustedCluster}, time.Time{}))
 	c.Assert(err, check.IsNil)
 	trustedCluster := main.Secrets.AsTrustedCluster(trustedClusterToken, services.RoleMap{
 		{Remote: mainDevs, Local: []string{auxDevs}},
@@ -3720,7 +3723,7 @@ func (s *IntSuite) TestRotateTrustedClusters(c *check.C) {
 	c.Logf("Setting rotation state to %v", services.RotationPhaseInit)
 
 	// start rotation
-	err = svc.GetAuthServer().RotateCertAuthority(auth.RotateRequest{
+	err = svc.GetAuthServer().RotateCertAuthority(server.RotateRequest{
 		TargetPhase: services.RotationPhaseInit,
 		Mode:        services.RotationModeManual,
 	})
@@ -3752,7 +3755,7 @@ func (s *IntSuite) TestRotateTrustedClusters(c *check.C) {
 	c.Assert(err, check.IsNil)
 
 	// update clients
-	err = svc.GetAuthServer().RotateCertAuthority(auth.RotateRequest{
+	err = svc.GetAuthServer().RotateCertAuthority(server.RotateRequest{
 		TargetPhase: services.RotationPhaseUpdateClients,
 		Mode:        services.RotationModeManual,
 	})
@@ -3772,7 +3775,7 @@ func (s *IntSuite) TestRotateTrustedClusters(c *check.C) {
 	c.Logf("Service reloaded. Setting rotation state to %v", services.RotationPhaseUpdateServers)
 
 	// move to the next phase
-	err = svc.GetAuthServer().RotateCertAuthority(auth.RotateRequest{
+	err = svc.GetAuthServer().RotateCertAuthority(server.RotateRequest{
 		TargetPhase: services.RotationPhaseUpdateServers,
 		Mode:        services.RotationModeManual,
 	})
@@ -3799,7 +3802,7 @@ func (s *IntSuite) TestRotateTrustedClusters(c *check.C) {
 	c.Logf("Service reloaded. Setting rotation state to %v.", services.RotationPhaseStandby)
 
 	// complete rotation
-	err = svc.GetAuthServer().RotateCertAuthority(auth.RotateRequest{
+	err = svc.GetAuthServer().RotateCertAuthority(server.RotateRequest{
 		TargetPhase: services.RotationPhaseStandby,
 		Mode:        services.RotationModeManual,
 	})
@@ -3899,7 +3902,7 @@ func (s *IntSuite) TestRotateChangeSigningAlg(c *check.C) {
 
 	rotate := func(svc *service.TeleportProcess, mode string) *service.TeleportProcess {
 		c.Logf("Rotation phase: %q.", services.RotationPhaseInit)
-		err = svc.GetAuthServer().RotateCertAuthority(auth.RotateRequest{
+		err = svc.GetAuthServer().RotateCertAuthority(server.RotateRequest{
 			TargetPhase: services.RotationPhaseInit,
 			Mode:        mode,
 		})
@@ -3910,7 +3913,7 @@ func (s *IntSuite) TestRotateChangeSigningAlg(c *check.C) {
 		c.Assert(err, check.IsNil)
 
 		c.Logf("Rotation phase: %q.", services.RotationPhaseUpdateClients)
-		err = svc.GetAuthServer().RotateCertAuthority(auth.RotateRequest{
+		err = svc.GetAuthServer().RotateCertAuthority(server.RotateRequest{
 			TargetPhase: services.RotationPhaseUpdateClients,
 			Mode:        mode,
 		})
@@ -3921,7 +3924,7 @@ func (s *IntSuite) TestRotateChangeSigningAlg(c *check.C) {
 		c.Assert(err, check.IsNil)
 
 		c.Logf("Rotation phase: %q.", services.RotationPhaseUpdateServers)
-		err = svc.GetAuthServer().RotateCertAuthority(auth.RotateRequest{
+		err = svc.GetAuthServer().RotateCertAuthority(server.RotateRequest{
 			TargetPhase: services.RotationPhaseUpdateServers,
 			Mode:        mode,
 		})
@@ -3932,7 +3935,7 @@ func (s *IntSuite) TestRotateChangeSigningAlg(c *check.C) {
 		c.Assert(err, check.IsNil)
 
 		c.Logf("rotation phase: %q", services.RotationPhaseStandby)
-		err = svc.GetAuthServer().RotateCertAuthority(auth.RotateRequest{
+		err = svc.GetAuthServer().RotateCertAuthority(server.RotateRequest{
 			TargetPhase: services.RotationPhaseStandby,
 			Mode:        mode,
 		})
@@ -4265,13 +4268,13 @@ func (s *IntSuite) TestList(c *check.C) {
 
 	// Wait 10 seconds for both nodes to show up to make sure they both have
 	// registered themselves.
-	waitForNodes := func(clt auth.ClientI, count int) error {
+	waitForNodes := func(clt authclient.ClientI, count int) error {
 		tickCh := time.Tick(500 * time.Millisecond)
 		stopCh := time.After(10 * time.Second)
 		for {
 			select {
 			case <-tickCh:
-				nodesInCluster, err := clt.GetNodes(defaults.Namespace, services.SkipValidation())
+				nodesInCluster, err := clt.GetNodes(defaults.Namespace, resource.SkipValidation())
 				if err != nil && !trace.IsNotFound(err) {
 					return trace.Wrap(err)
 				}
