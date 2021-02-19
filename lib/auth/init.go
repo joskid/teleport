@@ -284,11 +284,19 @@ func Init(cfg InitConfig, opts ...ServerOption) (*Server, error) {
 	}
 	log.Infof("Updating cluster configuration: %v.", cfg.StaticTokens)
 
-	err = asrv.SetAuthPreference(cfg.AuthPreference)
+	// Update the auth preference only if the stored value shouldn't be retained.
+	storedAuthPref, getErr := asrv.GetAuthPreference()
+	updateAuthPref, err := shouldUpdateResource(cfg.AuthPreference, storedAuthPref, getErr)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
-	log.Infof("Updating cluster configuration: %v.", cfg.AuthPreference)
+	if updateAuthPref {
+		err = asrv.SetAuthPreference(cfg.AuthPreference)
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+		log.Infof("Updating auth preference: %v.", cfg.AuthPreference)
+	}
 
 	// always create the default namespace
 	err = asrv.UpsertNamespace(services.NewNamespace(defaults.Namespace))
@@ -481,6 +489,24 @@ func Init(cfg InitConfig, opts ...ServerOption) (*Server, error) {
 	}
 
 	return asrv, nil
+}
+
+// shouldUpdateResource determines whether the candidate resource
+// should be used to replace the currently stored resource.
+//
+// For more details, see Section "Auth server initialization"
+// in rfd/0016-dynamic-configuration.md
+func shouldUpdateResource(candidate services.ResourceWithOrigin, stored services.ResourceWithOrigin, getErr error) (bool, error) {
+	if !candidate.IsFromDefaults() {
+		return true, nil
+	}
+	if getErr == nil {
+		return stored.IsFromConfigFile() || stored.IsFromDefaults(), nil
+	}
+	if !trace.IsNotFound(getErr) {
+		return false, getErr
+	}
+	return true, nil
 }
 
 func migrateLegacyResources(ctx context.Context, cfg InitConfig, asrv *Server) error {
