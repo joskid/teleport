@@ -81,11 +81,12 @@ Same as above, but using JSON output:
 // Initialize allows ResourceCommand to plug itself into the CLI parser
 func (rc *ResourceCommand) Initialize(app *kingpin.Application, config *service.Config) {
 	rc.CreateHandlers = map[ResourceKind]ResourceCreateHandler{
-		services.KindUser:            rc.createUser,
-		services.KindRole:            rc.createRole,
-		services.KindTrustedCluster:  rc.createTrustedCluster,
-		services.KindGithubConnector: rc.createGithubConnector,
-		services.KindCertAuthority:   rc.createCertAuthority,
+		services.KindUser:                  rc.createUser,
+		services.KindRole:                  rc.createRole,
+		services.KindTrustedCluster:        rc.createTrustedCluster,
+		services.KindGithubConnector:       rc.createGithubConnector,
+		services.KindCertAuthority:         rc.createCertAuthority,
+		services.KindClusterAuthPreference: rc.createAuthPreference,
 	}
 	rc.config = config
 
@@ -119,7 +120,6 @@ func (rc *ResourceCommand) Initialize(app *kingpin.Application, config *service.
 	rc.getCmd.Flag("with-secrets", "Include secrets in resources like certificate authorities or OIDC connectors").Default("false").BoolVar(&rc.withSecrets)
 
 	rc.getCmd.Alias(getHelp)
-
 }
 
 // TryRun takes the CLI command as an argument (like "auth gen") and executes it
@@ -339,7 +339,7 @@ func (rc *ResourceCommand) createGithubConnector(client auth.ClientI, raw servic
 	return nil
 }
 
-// createConnector implements 'tctl create role.yaml' command
+// createConnector implements `tctl create role.yaml` command
 func (rc *ResourceCommand) createRole(client auth.ClientI, raw services.UnknownResource) error {
 	ctx := context.TODO()
 	role, err := services.UnmarshalRole(raw.Raw)
@@ -366,7 +366,7 @@ func (rc *ResourceCommand) createRole(client auth.ClientI, raw services.UnknownR
 	return nil
 }
 
-// createUser implements 'tctl create user.yaml' command.
+// createUser implements `tctl create user.yaml` command.
 func (rc *ResourceCommand) createUser(client auth.ClientI, raw services.UnknownResource) error {
 	user, err := services.UnmarshalUser(raw.Raw)
 	if err != nil {
@@ -401,6 +401,36 @@ func (rc *ResourceCommand) createUser(client auth.ClientI, raw services.UnknownR
 		fmt.Printf("user %q has been created\n", userName)
 	}
 
+	return nil
+}
+
+// createAuthPreference implements `tctl create cap.yaml` command.
+func (rc *ResourceCommand) createAuthPreference(client auth.ClientI, raw services.UnknownResource) error {
+	newAuthPref, err := services.UnmarshalAuthPreference(raw.Raw)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+
+	storedAuthPref, err := client.GetAuthPreference()
+	if err != nil {
+		return trace.Wrap(err)
+	}
+
+	exists := !storedAuthPref.IsFromDefaults()
+	if !rc.force && exists {
+		return trace.AlreadyExists("non-default cluster auth preference already exists")
+	}
+
+	if storedAuthPref.IsFromConfigFile() {
+		return trace.Errorf("This resource is managed by static configuration. " +
+			"We recommend removing configuration from teleport.yaml, " +
+			"restarting the servers and trying this command again.")
+	}
+
+	if err := client.SetAuthPreference(newAuthPref); err != nil {
+		return trace.Wrap(err)
+	}
+	fmt.Printf("cluster auth preference has been %s\n", UpsertVerb(exists, rc.force))
 	return nil
 }
 
