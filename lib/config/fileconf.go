@@ -767,7 +767,7 @@ func (a *AuthenticationConfig) Parse() (services.AuthPreference, error) {
 		u = a.U2F.Parse()
 	}
 
-	ap, err := services.NewAuthPreference(services.AuthPreferenceSpecV2{
+	ap, err := services.NewAuthPreferenceFromConfigFile(services.AuthPreferenceSpecV2{
 		Type:          a.Type,
 		SecondFactor:  a.SecondFactor,
 		ConnectorName: a.ConnectorName,
