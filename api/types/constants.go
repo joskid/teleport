@@ -228,6 +228,20 @@ const (
 	VerbRotate = "rotate"
 )
 
+const (
+	// OriginLabel is a resource metadata label name used to identify a source
+	// that the resource originates from.
+	OriginLabel = "origin"
+
+	// OriginConfigFile is an origin value indicating that the resource is
+	// derived from static configuration.
+	OriginConfigFile = "config-file"
+
+	// OriginConfigFile is an origin value indicating that the resource was
+	// constructed as a default value.
+	OriginDefaults = "defaults"
+)
+
 // WebSessionSubKinds lists subkinds of web session resources
 var WebSessionSubKinds = []string{KindAppSession, KindWebSession}
 

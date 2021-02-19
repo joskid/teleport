@@ -300,6 +300,7 @@ var (
 type (
 	Resource            = types.Resource
 	ResourceWithSecrets = types.ResourceWithSecrets
+	ResourceWithOrigin  = types.ResourceWithOrigin
 )
 
 var (
