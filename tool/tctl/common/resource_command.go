@@ -52,6 +52,7 @@ type ResourceCommand struct {
 	namespace   string
 	withSecrets bool
 	force       bool
+	confirm     bool
 	ttl         string
 	labels      string
 
@@ -93,6 +94,7 @@ func (rc *ResourceCommand) Initialize(app *kingpin.Application, config *service.
 	rc.createCmd = app.Command("create", "Create or update a Teleport resource from a YAML file")
 	rc.createCmd.Arg("filename", "resource definition file, empty for stdin").StringVar(&rc.filename)
 	rc.createCmd.Flag("force", "Overwrite the resource if already exists").Short('f').BoolVar(&rc.force)
+	rc.createCmd.Flag("confirm", "Confirm an unsafe or temporary resource update").Hidden().BoolVar(&rc.confirm)
 
 	rc.updateCmd = app.Command("update", "Update resource fields")
 	rc.updateCmd.Arg("resource type/resource name", `Resource to update
@@ -421,10 +423,13 @@ func (rc *ResourceCommand) createAuthPreference(client auth.ClientI, raw service
 		return trace.AlreadyExists("non-default cluster auth preference already exists")
 	}
 
-	if storedAuthPref.IsFromConfigFile() {
+	managedByStatic := storedAuthPref.IsFromConfigFile()
+	if !rc.confirm && managedByStatic {
 		return trace.Errorf("This resource is managed by static configuration. " +
 			"We recommend removing configuration from teleport.yaml, " +
-			"restarting the servers and trying this command again.")
+			"restarting the servers and trying this command again.\n\n" +
+			"If you would still like to proceed, re-run the comand with both --force " +
+			"and --confirm flags.")
 	}
 
 	if err := client.SetAuthPreference(newAuthPref); err != nil {
