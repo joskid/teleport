@@ -428,7 +428,7 @@ func (rc *ResourceCommand) createAuthPreference(client auth.ClientI, raw service
 		return trace.Errorf("This resource is managed by static configuration. " +
 			"We recommend removing configuration from teleport.yaml, " +
 			"restarting the servers and trying this command again.\n\n" +
-			"If you would still like to proceed, re-run the comand with both --force " +
+			"If you would still like to proceed, re-run the command with both --force " +
 			"and --confirm flags.")
 	}
 
