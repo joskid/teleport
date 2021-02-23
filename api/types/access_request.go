@@ -19,9 +19,15 @@ package types
 
 import (
 	"fmt"
+	"reflect"
+	"sort"
 	"time"
 
+	"github.com/gravitational/teleport/api/utils"
+
 	"github.com/gravitational/trace"
+
+	"github.com/vulcand/predicate"
 )
 
 // AccessRequest is a request for temporarily granted roles
@@ -66,6 +72,23 @@ type AccessRequest interface {
 	GetSystemAnnotations() map[string][]string
 	// SetSystemAnnotations sets the teleport-applied annotations.
 	SetSystemAnnotations(map[string][]string)
+	// GetOriginalRoles gets the original (pre-override) role list.
+	GetOriginalRoles() []string
+	// SetThresholds sets the review thresholds (internal use only).
+	SetThresholds([]AccessReviewThreshold)
+	// SetRoleThresholdMapping sets the rtm (internal use only).  See documentation
+	// of the AccessRequestSpecV3.RoleThresholdMapping field for details on how
+	// the rtm works and why it is necessary.
+	SetRoleThresholdMapping(map[string]ThresholdIndexSets)
+	// ApplyReview applies an access review.  The supplied parser must be pre-configured to evaluate
+	// boolean expressions based on the review and its author.
+	ApplyReview(AccessReview, predicate.Parser) error
+	// GetReviews gets the list of currently applied access reviews.
+	GetReviews() []AccessReview
+	// GetSuggestedReviewers gets the suggested reviewer list.
+	GetSuggestedReviewers() []string
+	// SetSuggestedReviewers sets the suggested reviewer list.
+	SetSuggestedReviewers([]string)
 	// CheckAndSetDefaults validates the access request and
 	// supplies default values where appropriate.
 	CheckAndSetDefaults() error
@@ -185,6 +208,255 @@ func (r *AccessRequestV3) SetSystemAnnotations(annotations map[string][]string) 
 	r.Spec.SystemAnnotations = annotations
 }
 
+func (r *AccessRequestV3) GetOriginalRoles() []string {
+	if l := len(r.Spec.RoleThresholdMapping); l == 0 || l == len(r.Spec.Roles) {
+		// rtm is unspecified or original role list is unmodified
+		return r.Spec.Roles
+	}
+
+	// role subselection has been applied.  calculate original roles
+	// by collecting the keys of the rtm.
+	roles := make([]string, 0, len(r.Spec.RoleThresholdMapping))
+	for role := range r.Spec.RoleThresholdMapping {
+		roles = append(roles, role)
+	}
+	sort.Strings(roles)
+	return roles
+}
+
+// getThreshold is a helper for getting a threshold by its stored index.
+func (r *AccessRequestV3) getThreshold(tid uint32) (AccessReviewThreshold, error) {
+	idx := int(tid)
+	if len(r.Spec.Thresholds) <= idx {
+		return AccessReviewThreshold{}, trace.Errorf("threshold index '%d' out of range (this is a bug)", tid)
+	}
+	return r.Spec.Thresholds[idx], nil
+}
+
+// SetThresholds sets the review thresholds.
+func (r *AccessRequestV3) SetThresholds(thresholds []AccessReviewThreshold) {
+	r.Spec.Thresholds = thresholds
+}
+
+// SetRoleThresholdMapping sets the rtm (internal use only).
+func (r *AccessRequestV3) SetRoleThresholdMapping(rtm map[string]ThresholdIndexSets) {
+	r.Spec.RoleThresholdMapping = rtm
+}
+
+// ApplyReview applies an access review.  The supplied parser must be pre-configured to evaluate
+// boolean expressions based on the review and its author.  Prefer using services.ApplyAccessReview
+// rather than calling this method directly.
+func (r *AccessRequestV3) ApplyReview(rev AccessReview, parser predicate.Parser) error {
+	if !rev.ProposedState.IsApproved() && !rev.ProposedState.IsDenied() {
+		return trace.BadParameter("invalid state proposal: %s (expected approval/denial)", rev.ProposedState)
+	}
+
+	// the default theshold should exist. if it does not, the request either is not fully
+	// initialized (i.e. variable expansion has not been run yet) or the request was inserted into
+	// the backend by a teleport instance which does not support the review feature.
+	if len(r.Spec.Thresholds) == 0 {
+		return trace.BadParameter("request is uninitialized or does not support reviews")
+	}
+
+	for _, existingReview := range r.Spec.Reviews {
+		if existingReview.Author == rev.Author {
+			return trace.AccessDenied("user %q has already reviewed this request", rev.Author)
+		}
+	}
+
+	// dedupe and sort roles to simplify comparing role lists
+	rev.Roles = utils.Deduplicate(rev.Roles)
+	sort.Strings(rev.Roles)
+
+	// TODO(fspmarshall): Remove this restriction once role overrides
+	// in reviews are fully supported.
+	if len(rev.Roles) != 0 && len(rev.Roles) != len(r.Spec.RoleThresholdMapping) {
+		return trace.NotImplemented("reviews cannot perform role subselection, try omitting role list")
+	}
+
+	// matches collects the results of checking all relevant thresholds
+	// to see if their filters match this review.
+	matches := make(map[uint32]bool)
+	var matchCount int
+
+	roles := rev.Roles
+	if len(roles) == 0 {
+		roles = r.GetOriginalRoles()
+	}
+
+	// check for matches with all thresholds related to the roles selected by this review
+	// and aggregate the results.
+	for _, role := range roles {
+		thresholdSets, ok := r.Spec.RoleThresholdMapping[role]
+		if !ok {
+			return trace.BadParameter("role %q is not a member of this request", role)
+		}
+
+		for _, tset := range thresholdSets.Sets {
+			for _, tid := range tset.Indexes {
+				if _, ok := matches[tid]; ok {
+					// already checked this threshold
+					continue
+				}
+
+				thresh, err := r.getThreshold(tid)
+				if err != nil {
+					return trace.Wrap(err)
+				}
+
+				match, err := thresh.MatchesFilter(parser)
+				if err != nil {
+					return trace.Wrap(err)
+				}
+
+				matches[tid] = match
+				if match {
+					matchCount++
+				}
+			}
+		}
+	}
+
+	// record a list of all thresholds whose filters match this review.
+	rev.ThresholdIndexes = make([]uint32, 0, matchCount)
+	for tid, matched := range matches {
+		if matched {
+			rev.ThresholdIndexes = append(rev.ThresholdIndexes, tid)
+		}
+	}
+
+	r.Spec.Reviews = append(r.Spec.Reviews, rev)
+
+	// recalculate updated request state.
+	return r.onReview()
+}
+
+// onReview checks if we've hit sufficient thresholds for a state-transition,
+// and applies it if that is the case.
+func (r *AccessRequestV3) onReview() error {
+	if !r.Spec.State.IsPending() {
+		// no further state-transitions are performed after we exit
+		// the PENDING state.
+		return nil
+	}
+
+	// TODO(fspmarshall): Rework this function to support role subselection.
+
+	// approved keeps track of roles that have hit at least one
+	// of their approval thresholds.
+	approved := make(map[string]struct{})
+	// counts keeps track of the approval and denial counts for all thresholds.
+	counts := make([]struct{ approval, denial uint32 }, len(r.Spec.Thresholds))
+
+	// lastReview stores the most recently processed review.  Since processing halts
+	// once we hit our first approval/denial condition, this review represents the
+	// triggering review for the approval/denial state-transition.
+	var lastReview AccessReview
+
+	// Iterate through all reviews and aggregate them against `counts`.
+ProcessReviews:
+	for _, rev := range r.Spec.Reviews {
+		lastReview = rev
+		for _, tid := range rev.ThresholdIndexes {
+			idx := int(tid)
+			if len(r.Spec.Thresholds) <= idx {
+				return trace.Errorf("threshold index '%d' out of range (this is a bug)", idx)
+			}
+			if rev.ProposedState.IsApproved() {
+				counts[idx].approval++
+			}
+			if rev.ProposedState.IsDenied() {
+				counts[idx].denial++
+			}
+		}
+
+		// If we hit any denial thresholds, short-circuit immediately
+		for i, t := range r.Spec.Thresholds {
+
+			if counts[i].denial >= t.Deny && t.Deny != 0 {
+				// A single denial threshold has been met, deny entire request
+				r.Spec.State = RequestState_DENIED
+				r.Spec.ResolveReason = lastReview.Reason
+				r.Spec.ResolveAnnotations = lastReview.Annotations
+				return nil
+			}
+		}
+
+		// check for roles that can be transitioned to an approved state
+	CheckRoleApprovals:
+		for role, thresholdSets := range r.Spec.RoleThresholdMapping {
+			if _, ok := approved[role]; ok {
+				// role was marked approved during a previous iteration
+				continue CheckRoleApprovals
+			}
+
+			// iterate through all theshold sets.  All sets must have at least
+			// one threshold which has hit its approval count in order for the
+			// role to be considered approved.
+		CheckThresholdSets:
+			for _, thresholds := range thresholdSets.Sets {
+
+				for _, tid := range thresholds.Indexes {
+					idx := int(tid)
+					if len(r.Spec.Thresholds) <= idx {
+						return trace.Errorf("threshold index out of range %s/%d (this is a bug)", role, tid)
+					}
+					t := r.Spec.Thresholds[idx]
+
+					if counts[idx].approval >= t.Approve && t.Approve != 0 {
+						// this set contains a threshold which has met its approval condition.
+						// skip to the next set.
+						continue CheckThresholdSets
+					}
+				}
+
+				// no thresholds met for this set. there may be additional roles/thresholds
+				// which did meet their requirements this iteration, but there is no point
+				// processing them unless this set has also hit its requirements.  we therefore
+				// move immediately to processing the next review.
+				continue ProcessReviews
+			}
+
+			// since we skip to the next review as soon as we see a set which has not hit any of its
+			// approval scenarios, we know that if we get to this point the role must be approved.
+			approved[role] = struct{}{}
+		}
+		// If we got here, then we iterated across all roles in the rtm without hitting any that
+		// had not met their approval scenario.  The request has hit an approved state and further
+		// reviews will not be processed.
+		break ProcessReviews
+	}
+
+	if len(approved) != len(r.Spec.RoleThresholdMapping) {
+		// at least one role has not hit its approval threshold
+		return nil
+	}
+
+	r.Spec.State = RequestState_APPROVED
+
+	// resolve reasons and annotations are set only by the final review.
+	r.Spec.ResolveReason = lastReview.Reason
+	r.Spec.ResolveAnnotations = lastReview.Annotations
+	r.SetExpiry(r.GetAccessExpiry())
+
+	return nil
+}
+
+// GetReviews gets the list of currently applied access reviews.
+func (r *AccessRequestV3) GetReviews() []AccessReview {
+	return r.Spec.Reviews
+}
+
+// GetSuggestedReviewers gets the suggested reviewer list.
+func (r *AccessRequestV3) GetSuggestedReviewers() []string {
+	return r.Spec.SuggestedReviewers
+}
+
+// SetSuggestedReviewers sets the suggested reviewer list.
+func (r *AccessRequestV3) SetSuggestedReviewers(reviewers []string) {
+	r.Spec.SuggestedReviewers = reviewers
+}
+
 // CheckAndSetDefaults validates set values and sets default values
 func (r *AccessRequestV3) CheckAndSetDefaults() error {
 	if err := r.Metadata.CheckAndSetDefaults(); err != nil {
@@ -195,6 +467,11 @@ func (r *AccessRequestV3) CheckAndSetDefaults() error {
 			return trace.Wrap(err)
 		}
 	}
+
+	// dedupe and sort roles to simplify comparing role lists
+	r.Spec.Roles = utils.Deduplicate(r.Spec.Roles)
+	sort.Strings(r.Spec.Roles)
+
 	if err := r.Check(); err != nil {
 		return trace.Wrap(err)
 	}
@@ -306,6 +583,51 @@ func (r *AccessRequestV3) Equals(other AccessRequest) bool {
 		return false
 	}
 	return r.Spec.Equals(&o.Spec)
+}
+
+// MatchesFilter returns true if Filter rule matches
+// Empty Filter block always matches
+func (t AccessReviewThreshold) MatchesFilter(parser predicate.Parser) (bool, error) {
+	if t.Filter == "" {
+		return true, nil
+	}
+	ifn, err := parser.Parse(t.Filter)
+	if err != nil {
+		return false, trace.Wrap(err)
+	}
+	fn, ok := ifn.(predicate.BoolPredicate)
+	if !ok {
+		return false, trace.BadParameter("unsupported type: %T", ifn)
+	}
+	return fn(), nil
+}
+
+func (t AccessReviewThreshold) Equals(other AccessReviewThreshold) bool {
+	return reflect.DeepEqual(t, other)
+}
+
+func (c AccessReviewConditions) IsZero() bool {
+	return reflect.ValueOf(c).IsZero()
+}
+
+func (c AccessRequestConditions) IsZero() bool {
+	return reflect.ValueOf(c).IsZero()
+}
+
+func (s AccessReviewSubmission) Check() error {
+	if s.RequestID == "" {
+		return trace.BadParameter("missing request ID")
+	}
+
+	return s.Review.Check()
+}
+
+func (s AccessReview) Check() error {
+	if s.Author == "" {
+		return trace.BadParameter("missing review author")
+	}
+
+	return nil
 }
 
 // AccessRequestUpdate encompasses the parameters of a
