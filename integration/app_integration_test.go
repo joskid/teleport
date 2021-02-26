@@ -33,8 +33,11 @@ import (
 	"time"
 
 	"github.com/gravitational/teleport"
+	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/teleport/lib"
+	"github.com/gravitational/teleport/lib/auth"
 	"github.com/gravitational/teleport/lib/auth/testauthority"
+	"github.com/gravitational/teleport/lib/client"
 	"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/httplib/csrf"
 	"github.com/gravitational/teleport/lib/jwt"
@@ -51,9 +54,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestForward tests that requests get forwarded to the target application
+// TestAppAccessForward tests that requests get forwarded to the target application
 // within a single cluster and trusted cluster.
-func TestForward(t *testing.T) {
+func TestAppAccessForward(t *testing.T) {
 	// Create cluster, user, sessions, and credentials package.
 	pack := setup(t)
 
@@ -93,9 +96,44 @@ func TestForward(t *testing.T) {
 	}
 }
 
-// TestForwardModes ensures that requests are forwarded to applications even
+// TestAppAccessClientCert tests mutual TLS authentication flow with application
+// access typically used in CLI by curl and other clients.
+func TestAppAccessClientCert(t *testing.T) {
+	pack := setup(t)
+
+	tests := []struct {
+		desc          string
+		inTLSConfig   *tls.Config
+		outStatusCode int
+		outMessage    string
+	}{
+		{
+			desc:          "root cluster, valid TLS config, success",
+			inTLSConfig:   pack.makeTLSConfig(t, pack.rootAppPublicAddr, pack.rootAppClusterName),
+			outStatusCode: http.StatusOK,
+			outMessage:    pack.rootMessage,
+		},
+		{
+			desc:          "leaf cluster, valid TLS config, success",
+			inTLSConfig:   pack.makeTLSConfig(t, pack.leafAppPublicAddr, pack.leafAppClusterName),
+			outStatusCode: http.StatusOK,
+			outMessage:    pack.leafMessage,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			tt := tt
+			status, body, err := pack.makeRequestWithClientCert(tt.inTLSConfig, http.MethodGet, "/")
+			require.NoError(t, err)
+			require.Equal(t, tt.outStatusCode, status)
+			require.Contains(t, body, tt.outMessage)
+		})
+	}
+}
+
+// TestAppAccessForwardModes ensures that requests are forwarded to applications even
 // when the cluster is in proxy recording mode.
-func TestForwardModes(t *testing.T) {
+func TestAppAccessForwardModes(t *testing.T) {
 	// Create cluster, user, sessions, and credentials package.
 	pack := setup(t)
 
@@ -140,8 +178,8 @@ func TestForwardModes(t *testing.T) {
 	}
 }
 
-// TestLogout verifies the session is removed from the backend when the user logs out.
-func TestLogout(t *testing.T) {
+// TestAppAccessLogout verifies the session is removed from the backend when the user logs out.
+func TestAppAccessLogout(t *testing.T) {
 	// Create cluster, user, and credentials package.
 	pack := setup(t)
 
@@ -159,9 +197,9 @@ func TestLogout(t *testing.T) {
 	require.Equal(t, http.StatusFound, status)
 }
 
-// TestJWT ensures a JWT token is attached to requests and the JWT token can
+// TestAppAccessJWT ensures a JWT token is attached to requests and the JWT token can
 // be validated.
-func TestJWT(t *testing.T) {
+func TestAppAccessJWT(t *testing.T) {
 	// Create cluster, user, and credentials package.
 	pack := setup(t)
 
@@ -201,9 +239,9 @@ func TestJWT(t *testing.T) {
 	require.Equal(t, pack.user.GetRoles(), claims.Roles)
 }
 
-// TestNoHeaderOverrides ensures that AAP-specific headers cannot be overridden
+// TestAppAccessNoHeaderOverrides ensures that AAP-specific headers cannot be overridden
 // by values passed in by the user.
-func TestNoHeaderOverrides(t *testing.T) {
+func TestAppAccessNoHeaderOverrides(t *testing.T) {
 	// Create cluster, user, and credentials package.
 	pack := setup(t)
 
@@ -229,7 +267,7 @@ func TestNoHeaderOverrides(t *testing.T) {
 	}
 
 	// Issue the request.
-	status, newHeaderResp, err := pack.sendRequest(req)
+	status, newHeaderResp, err := pack.sendRequest(req, nil)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, status)
 	newHeaders := strings.Split(newHeaderResp, "\n")
@@ -245,6 +283,8 @@ func TestNoHeaderOverrides(t *testing.T) {
 type pack struct {
 	username string
 	password string
+
+	tc *client.TeleportClient
 
 	user services.User
 
@@ -478,6 +518,9 @@ func setup(t *testing.T) *pack {
 	// Create Web UI session.
 	p.createWebSession(t)
 
+	// Initialize Teleport client with the user's credentials.
+	p.createTeleportClient(t)
+
 	return p
 }
 
@@ -558,6 +601,24 @@ func (p *pack) createWebSession(t *testing.T) {
 	p.webToken = csResp.Token
 }
 
+func (p *pack) createTeleportClient(t *testing.T) {
+	creds, err := GenerateUserCreds(UserCredsRequest{
+		Process:  p.rootCluster.Process,
+		Username: p.user.GetName(),
+	})
+	require.NoError(t, err)
+
+	tc, err := p.rootCluster.NewClientWithCreds(ClientConfig{
+		Login:   p.user.GetName(),
+		Cluster: p.rootCluster.Secrets.SiteName,
+		Host:    Loopback,
+		Port:    p.rootCluster.GetPortSSHInt(),
+	}, *creds)
+	require.NoError(t, err)
+
+	p.tc = tc
+}
+
 // createAppSession creates an application session with the root cluster. The
 // application that the user connects to may be running in a leaf cluster.
 func (p *pack) createAppSession(t *testing.T, publicAddr, clusterName string) string {
@@ -604,6 +665,76 @@ func (p *pack) createAppSession(t *testing.T, publicAddr, clusterName string) st
 	return casResp.CookieValue
 }
 
+// makeTLSConfig returns TLS config suitable for making an app access request.
+func (p *pack) makeTLSConfig(t *testing.T, publicAddr, clusterName string) *tls.Config {
+	privateKey, publicKey, err := p.rootCluster.Process.GetAuthServer().GenerateKeyPair("")
+	require.NoError(t, err)
+
+	sessionID := uuid.New()
+	certificate, err := p.rootCluster.Process.GetAuthServer().GenerateUserAppTestCert(
+		auth.AppTestCertRequest{
+			PublicKey:   publicKey,
+			Username:    p.user.GetName(),
+			TTL:         time.Hour,
+			PublicAddr:  publicAddr,
+			ClusterName: clusterName,
+			SessionID:   sessionID,
+		})
+	require.NoError(t, err)
+
+	tlsCert, err := tls.X509KeyPair(certificate, privateKey)
+	require.NoError(t, err)
+
+	authClient := p.rootCluster.GetSiteAPI(p.rootCluster.Secrets.SiteName)
+	ca, err := authClient.GetCertAuthority(services.CertAuthID{
+		Type:       services.HostCA,
+		DomainName: p.rootCluster.Secrets.SiteName,
+	}, false)
+	require.NoError(t, err)
+
+	pool, err := services.CertPool(ca)
+	require.NoError(t, err)
+
+	creds, err := GenerateUserCreds(UserCredsRequest{
+		Process:  p.rootCluster.Process,
+		Username: p.user.GetName(),
+	})
+	require.NoError(t, err)
+
+	tc, err := p.rootCluster.NewClientWithCreds(ClientConfig{
+		Login:   p.user.GetName(),
+		Cluster: p.rootCluster.Secrets.SiteName,
+		Host:    Loopback,
+		Port:    p.rootCluster.GetPortSSHInt(),
+	}, *creds)
+	require.NoError(t, err)
+
+	err = tc.CreateAppSession(context.Background(), types.CreateAppSessionRequest{
+		Username:    p.user.GetName(),
+		PublicAddr:  publicAddr,
+		ClusterName: clusterName,
+		SessionID:   sessionID,
+	})
+
+	// err = tc.UpsertAppSession(context.Background(),
+	// 	types.NewWebSession(sessionID,
+	// 		types.KindWebSession,
+	// 		types.KindAppSession,
+	// 		types.WebSessionSpecV2{
+	// 			User:    p.user.GetName(),
+	// 			Priv:    privateKey,
+	// 			Pub:     publicKey,
+	// 			TLSCert: certificate,
+	// 		}))
+	require.NoError(t, err)
+
+	return &tls.Config{
+		RootCAs:            pool,
+		Certificates:       []tls.Certificate{tlsCert},
+		InsecureSkipVerify: true,
+	}
+}
+
 // makeRequest makes a request to the root cluster with the given session cookie.
 func (p *pack) makeRequest(sessionCookie string, method string, endpoint string) (int, string, error) {
 	req, err := http.NewRequest(method, p.assembleRootProxyURL(endpoint), nil)
@@ -619,7 +750,17 @@ func (p *pack) makeRequest(sessionCookie string, method string, endpoint string)
 		})
 	}
 
-	return p.sendRequest(req)
+	return p.sendRequest(req, nil)
+}
+
+// makeRequestWithClientCert makes a request to the root cluster using the
+// client certificate authentication from the provided tls config.
+func (p *pack) makeRequestWithClientCert(tlsConfig *tls.Config, method, endpoint string) (int, string, error) {
+	req, err := http.NewRequest(method, p.assembleRootProxyURL(endpoint), nil)
+	if err != nil {
+		return 0, "", trace.Wrap(err)
+	}
+	return p.sendRequest(req, tlsConfig)
 }
 
 // assembleRootProxyURL returns the URL string of an endpoint at the root
@@ -634,12 +775,16 @@ func (p *pack) assembleRootProxyURL(endpoint string) string {
 }
 
 // sendReqeust sends the request to the root cluster.
-func (p *pack) sendRequest(req *http.Request) (int, string, error) {
+func (p *pack) sendRequest(req *http.Request, tlsConfig *tls.Config) (int, string, error) {
+	if tlsConfig == nil {
+		tlsConfig = &tls.Config{
+			InsecureSkipVerify: true,
+		}
+	}
+
 	client := &http.Client{
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-			},
+			TLSClientConfig: tlsConfig,
 		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse

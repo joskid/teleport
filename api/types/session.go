@@ -67,12 +67,14 @@ type WebSession interface {
 	SetUser(string)
 	// GetPub is returns public certificate signed by auth server
 	GetPub() []byte
+	SetPub([]byte)
 	// GetPriv returns private OpenSSH key used to auth with SSH nodes
 	GetPriv() []byte
 	// SetPriv sets private key
 	SetPriv([]byte)
 	// GetTLSCert returns PEM encoded TLS certificate associated with session
 	GetTLSCert() []byte
+	SetTLSCert([]byte)
 	// BearerToken is a special bearer token used for additional
 	// bearer authentication
 	GetBearerToken() string
@@ -216,9 +218,17 @@ func (ws *WebSessionV2) GetTLSCert() []byte {
 	return ws.Spec.TLSCert
 }
 
+func (ws *WebSessionV2) SetTLSCert(cert []byte) {
+	ws.Spec.TLSCert = cert
+}
+
 // GetPub is returns public certificate signed by auth server
 func (ws *WebSessionV2) GetPub() []byte {
 	return ws.Spec.Pub
+}
+
+func (ws *WebSessionV2) SetPub(pub []byte) {
+	ws.Spec.Pub = pub
 }
 
 // GetPriv returns private OpenSSH key used to auth with SSH nodes
@@ -278,6 +288,8 @@ type CreateAppSessionRequest struct {
 	PublicAddr string `json:"public_addr"`
 	// ClusterName is the name of the cluster within which the application is running.
 	ClusterName string `json:"cluster_name"`
+	//
+	SessionID string `json:"session_id"`
 }
 
 // Check validates the request.
@@ -533,4 +545,39 @@ func (r *DeleteWebTokenRequest) Check() error {
 		return trace.BadParameter("token missing")
 	}
 	return nil
+}
+
+// IntoMap makes this filter into a map.
+func (f *WebSessionFilter) IntoMap() map[string]string {
+	m := make(map[string]string)
+	if f.User != "" {
+		m[keyUser] = f.User
+	}
+	return m
+}
+
+// FromMap converts provided map into this filter.
+func (f *WebSessionFilter) FromMap(m map[string]string) error {
+	for key, val := range m {
+		switch key {
+		case keyUser:
+			f.User = val
+		default:
+			return trace.BadParameter("unknown filter key %s", key)
+		}
+	}
+	return nil
+}
+
+// Match checks if a given web session matches this filter.
+func (f *WebSessionFilter) Match(session WebSession) bool {
+	if f.User != "" && session.GetUser() != f.User {
+		return false
+	}
+	return true
+}
+
+// Equals compares two filters.
+func (f *WebSessionFilter) Equals(o WebSessionFilter) bool {
+	return f.User == o.User
 }

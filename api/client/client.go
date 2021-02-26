@@ -636,12 +636,28 @@ func (c *Client) CreateAppSession(ctx context.Context, req types.CreateAppSessio
 		ParentSession: req.ParentSession,
 		PublicAddr:    req.PublicAddr,
 		ClusterName:   req.ClusterName,
+		SessionID:     req.SessionID,
 	})
 	if err != nil {
 		return nil, trail.FromGRPC(err)
 	}
 
 	return resp.GetSession(), nil
+}
+
+// UpsertAppSession saves the provided application web session.
+func (c *Client) UpsertAppSession(ctx context.Context, session types.WebSession) error {
+	sess, ok := session.(*types.WebSessionV2)
+	if !ok {
+		return trace.BadParameter("expected *types.WebSessionV2, got %T", session)
+	}
+	_, err := c.grpc.UpsertAppSession(ctx, &proto.UpsertAppSessionRequest{
+		Session: sess,
+	})
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	return nil
 }
 
 // DeleteAppSession removes an application web session.

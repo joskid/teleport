@@ -50,6 +50,7 @@ const (
 	fileNameTLSCerts   = "certs.pem"
 	kubeDirSuffix      = "-kube"
 	dbDirSuffix        = "-db"
+	appDirSuffix       = "-app"
 
 	// profileDirPerms is the default permissions applied to the profile
 	// directory (usually ~/.tsh)
@@ -215,6 +216,15 @@ func (fs *FSLocalKeyStore) AddKey(host, username string, key *Key) error {
 			return trace.Wrap(err)
 		}
 	}
+	for app, cert := range key.AppTLSCerts {
+		fname := filepath.Join(username+appDirSuffix, key.ClusterName, filepath.Clean(app)+fileExtTLSCert)
+		if err := os.MkdirAll(filepath.Join(dirPath, filepath.Dir(fname)), os.ModeDir|profileDirPerms); err != nil {
+			return trace.Wrap(err)
+		}
+		if err := writeBytes(fname, cert); err != nil {
+			return trace.Wrap(err)
+		}
+	}
 	return nil
 }
 
@@ -324,6 +334,7 @@ func (fs *FSLocalKeyStore) GetKey(proxyHost, username string, opts ...KeyOption)
 		}},
 		KubeTLSCerts: make(map[string][]byte),
 		DBTLSCerts:   make(map[string][]byte),
+		AppTLSCerts:  make(map[string][]byte),
 	}
 
 	for _, o := range opts {
@@ -449,6 +460,48 @@ func (o withDBCerts) deleteKey(dirPath, username string) error {
 		return os.Remove(filepath.Join(dirPath, username+dbDirSuffix, o.teleportClusterName, o.dbName+fileExtTLSCert))
 	}
 	return os.RemoveAll(filepath.Join(dirPath, username+dbDirSuffix, o.teleportClusterName))
+}
+
+// WithAppCerts returns a GetKeyOption to load application access certificates
+// from the store for a given Teleport cluster.
+func WithAppCerts(teleportClusterName, appName string) KeyOption {
+	return withAppCerts{teleportClusterName: teleportClusterName, appName: appName}
+}
+
+type withAppCerts struct {
+	teleportClusterName, appName string
+}
+
+func (o withAppCerts) getKey(dirPath, username string, key *Key) error {
+	appDir := filepath.Join(dirPath, username+appDirSuffix, o.teleportClusterName)
+	appFiles, err := ioutil.ReadDir(appDir)
+	if err != nil && !os.IsNotExist(err) {
+		return trace.Wrap(err)
+	}
+	if key.AppTLSCerts == nil {
+		key.AppTLSCerts = make(map[string][]byte)
+	}
+	for _, fi := range appFiles {
+		data, err := ioutil.ReadFile(filepath.Join(appDir, fi.Name()))
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		appName := strings.TrimSuffix(filepath.Base(fi.Name()), fileExtTLSCert)
+		key.AppTLSCerts[appName] = data
+	}
+	if key.ClusterName == "" {
+		key.ClusterName = o.teleportClusterName
+	}
+	return nil
+}
+
+func (o withAppCerts) deleteKey(dirPath, username string) error {
+	// If app name is specified, remove only that cert, otherwise remove
+	// certs for all apps a user is logged into.
+	if o.appName != "" {
+		return os.Remove(filepath.Join(dirPath, username+appDirSuffix, o.teleportClusterName, o.appName+fileExtTLSCert))
+	}
+	return os.RemoveAll(filepath.Join(dirPath, username+appDirSuffix, o.teleportClusterName))
 }
 
 // SaveCerts saves trusted TLS certificates of certificate authorities
