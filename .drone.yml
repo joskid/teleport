@@ -5,6 +5,7 @@ name: test
 
 environment:
   RUNTIME: go1.16.2
+  BORINGCRYPTO_BRANCH: dev.boringcrypto.go1.15
   UID: 1000
   GID: 1000
 
@@ -844,9 +845,11 @@ platform:
 trigger:
   event:
     include:
-      - push
-    exclude:
       - pull_request
+    #include:
+    #  - push
+    #exclude:
+    #  - pull_request
   branch:
     include:
       - master
@@ -876,12 +879,18 @@ steps:
       GITHUB_PRIVATE_KEY:
         from_secret: GITHUB_PRIVATE_KEY
       WORKSPACE_DIR: /tmp/push-build-darwin-amd64-fips
+      TELEPORT_DIR: $WORKSPACE_DIR/go/src/github.com/gravitational/teleport
+      GODL_DIR: $WORKSPACE_DIR/go/src/github.com/gravitational/godl
+      GODL_COMMIT: 5b8115c1f2fc7c5e0792c662bc9816e171bc4b14
     commands:
       - set -u
-      - mkdir -p $WORKSPACE_DIR/go/src/github.com/gravitational/teleport
-      - cd $WORKSPACE_DIR/go/src/github.com/gravitational/teleport
+      - mkdir -p $TELEPORT_DIR $GODL_DIR
+      - cd $TELEPORT_DIR
       - git clone https://github.com/gravitational/teleport.git .
       - git checkout ${DRONE_TAG:-$DRONE_COMMIT}
+      - cd $GODL_DIR
+      - git clone https://github.com/gravitational/godl.git .
+      - git checkout $GODL_COMMIT
       # fetch enterprise submodules
       # suppressing the newline on the end of the private key makes git operations fail on MacOS
       # with an error like 'Load key "/path/.ssh/id_rsa": invalid format'
@@ -894,12 +903,38 @@ steps:
       - rm -rf $WORKSPACE_DIR/.ssh
       - mkdir -p $WORKSPACE_DIR/go/cache
 
+  - name: Build the boringcrypto Go builder
+    environment:
+      GODL_DIR: /tmp/push-build-darwin-amd64-fips/go/src/github.com/gravitational/godl
+    commands:
+      - set -u
+      - cd $GODL_DIR
+      - mkdir build
+      - go build -o $GODL_DIR/build/$BORINGCRYPTO_BRANCH $BORINGCRYPTO_BRANCH/main.go
+
+  - name: Pull boringcrypto build tarball from S3
+    environment:
+      AWS_S3_BUCKET: builds.gravitational.io
+      AWS_ACCESS_KEY_ID:
+        from_secret: AWS_ACCESS_KEY_ID
+      AWS_SECRET_ACCESS_KEY:
+        from_secret: AWS_SECRET_ACCESS_KEY
+      AWS_REGION: us-west-2
+      SDK_DIR: /Users/build/sdks/$BORINGCRYPTO_BRANCH
+      GODL_DIR: /tmp/push-build-darwin-amd64-fips/go/src/github.com/gravitational/godl
+    commands:
+      - set -u
+      - cd $SDK_DIR
+      - aws s3 cp s3://$AWS_S3_BUCKET/ci/go/$BORINGCRYPTO_BRANCH-darwin-amd64.tar.gz .
+      - aws s3 cp s3://$AWS_S3_BUCKET/ci/go/$BORINGCRYPTO_BRANCH-darwin-amd64.tar.gz.sha256 .
+      - $GODL_DIR/build/$BORINGCRYPTO_BRANCH download
+
   - name: Build Mac artifacts
     environment:
       GOPATH: /tmp/push-build-darwin-amd64-fips/go
       GOCACHE: /tmp/push-build-darwin-amd64-fips/go/cache
       # version of the Go builder
-      GO: dev.boringcrypto.go1.15
+      GO: /tmp/push-build-darwin-amd64-fips/go/src/github.com/gravitational/godl/build/$BORINGCRYPTO_BRANCH
       OS: darwin
       ARCH: amd64
       WORKSPACE_DIR: /tmp/push-build-darwin-amd64-fips
@@ -2894,6 +2929,122 @@ steps:
       - set -u
       - chmod -R u+rw $WORKSPACE_DIR
       - rm -rf $WORKSPACE_DIR/go $WORKSPACE_DIR/.ssh
+
+---
+kind: pipeline
+type: exec
+name: build-darwin-amd64-fips
+
+concurrency:
+  limit: 1
+
+platform:
+  os: darwin
+  arch: amd64
+
+trigger:
+  event:
+    - tag
+  ref:
+    include:
+      - refs/tags/v*
+  repo:
+    include:
+      - gravitational/*
+
+workspace:
+  path: /tmp/build-darwin-amd64-fips
+
+clone:
+  disable: true
+
+steps:
+  - name: Set up exec runner storage
+    environment:
+      WORKSPACE_DIR: /tmp/build-darwin-amd64-fips
+    commands:
+      - set -u
+      - mkdir -p $WORKSPACE_DIR
+      - chmod -R u+rw $WORKSPACE_DIR
+      - rm -rf $WORKSPACE_DIR/go $WORKSPACE_DIR/.ssh
+
+  - name: Check out code
+    environment:
+      GITHUB_PRIVATE_KEY:
+        from_secret: GITHUB_PRIVATE_KEY
+      WORKSPACE_DIR: /tmp/build-darwin-amd64-fips
+      TELEPORT_DIR: $WORKSPACE_DIR/go/src/github.com/gravitational/teleport
+      GODL_DIR: $WORKSPACE_DIR/go/src/github.com/gravitational/godl
+    commands:
+      - set -u
+      - mkdir -p $TELEPORT_DIR $GODL_DIR
+      - cd $TELEPORT_DIR
+      - git clone https://github.com/gravitational/${DRONE_REPO_NAME}.git .
+      - git checkout ${DRONE_TAG:-$DRONE_COMMIT}
+      # fetch enterprise submodules
+      # suppressing the newline on the end of the private key makes git operations fail on MacOS
+      # with an error like 'Load key "/path/.ssh/id_rsa": invalid format'
+      - mkdir -m 0700 $WORKSPACE_DIR/.ssh && echo "$GITHUB_PRIVATE_KEY" > $WORKSPACE_DIR/.ssh/id_rsa && chmod 600 $WORKSPACE_DIR/.ssh/id_rsa
+      - ssh-keyscan -H github.com > $WORKSPACE_DIR/.ssh/known_hosts 2>/dev/null
+      - chmod 600 $WORKSPACE_DIR/.ssh/known_hosts
+      - GIT_SSH_COMMAND='ssh -i $WORKSPACE_DIR/.ssh/id_rsa -o UserKnownHostsFile=$WORKSPACE_DIR/.ssh/known_hosts -F /dev/null' git submodule update --init e
+      # this is allowed to fail because pre-4.3 Teleport versions don't use the webassets submodule
+      - GIT_SSH_COMMAND='ssh -i $WORKSPACE_DIR/.ssh/id_rsa -o UserKnownHostsFile=$WORKSPACE_DIR/.ssh/known_hosts -F /dev/null' git submodule update --init --recursive webassets || true
+      - rm -rf $WORKSPACE_DIR/.ssh
+      - mkdir -p $WORKSPACE_DIR/go/artifacts $WORKSPACE_DIR/go/cache
+      - echo "${DRONE_TAG##v}" > $WORKSPACE_DIR/go/.version.txt
+      - cat $WORKSPACE_DIR/go/.version.txt
+
+  - name: Build Mac release artifacts
+    environment:
+      WORKSPACE_DIR: /tmp/build-darwin-amd64-fips
+      GOPATH: $WORKSPACE_DIR/go
+      GOCACHE: $WORKSPACE_DIR/go/cache
+      GO: $WORKSPACE_DIR/go/src/github.com/gravitational/godl/build/$BORINGCRYPTO_BRANCH
+      OS: darwin
+      ARCH: amd64
+      FIPS: yes
+    commands:
+      - set -u
+      - cd $WORKSPACE_DIR/go/src/github.com/gravitational/teleport
+      - make clean release OS=$OS ARCH=$ARCH FIPS=$FIPS GO=$GO
+
+  - name: Copy Mac artifacts
+    environment:
+      WORKSPACE_DIR: /tmp/build-darwin-amd64-fips
+    commands:
+      - set -u
+      - cd $WORKSPACE_DIR/go/src/github.com/gravitational/teleport
+      # copy release archives to artifact directory
+      - cp teleport*.tar.gz $WORKSPACE_DIR/go/artifacts
+      - cp e/teleport-ent*.tar.gz $WORKSPACE_DIR/go/artifacts
+      # generate checksums (for mac)
+      - cd $WORKSPACE_DIR/go/artifacts && for FILE in teleport*.tar.gz; do shasum -a 256 $FILE > $FILE.sha256; done && ls -l
+
+  - name: Upload to S3
+    environment:
+      AWS_S3_BUCKET:
+        from_secret: AWS_S3_BUCKET
+      AWS_ACCESS_KEY_ID:
+        from_secret: AWS_ACCESS_KEY_ID
+      AWS_SECRET_ACCESS_KEY:
+        from_secret: AWS_SECRET_ACCESS_KEY
+      AWS_REGION: us-west-2
+      WORKSPACE_DIR: /tmp/build-darwin-amd64-fips
+    commands:
+      - set -u
+      - cd $WORKSPACE_DIR/go/artifacts
+      - aws s3 sync . s3://$AWS_S3_BUCKET/teleport/tag/${DRONE_TAG##v}
+
+  - name: Clean up exec runner storage (post)
+    environment:
+      WORKSPACE_DIR: /tmp/build-darwin-amd64-fips
+    commands:
+      - set -u
+      - chmod -R u+rw $WORKSPACE_DIR
+      - rm -rf $WORKSPACE_DIR/go $WORKSPACE_DIR/.ssh
+
+# TODO(dmitri): build-darwin-amd64-fips-pkg
 
 ---
 kind: pipeline
