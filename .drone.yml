@@ -5,7 +5,6 @@ name: test
 
 environment:
   RUNTIME: go1.16.2
-  BORINGCRYPTO_BRANCH: dev.boringcrypto.go1.15
   UID: 1000
   GID: 1000
 
@@ -882,6 +881,7 @@ steps:
       TELEPORT_DIR: /tmp/push-build-darwin-amd64-fips/go/src/github.com/gravitational/teleport
       GODL_DIR: /tmp/push-build-darwin-amd64-fips/go/src/github.com/gravitational/godl
       GODL_COMMIT: 5b8115c1f2fc7c5e0792c662bc9816e171bc4b14
+      BORINGCRYPTO_BRANCH: dev.boringcrypto.go1.15
     commands:
       - set -u
       - mkdir -p $TELEPORT_DIR $GODL_DIR
@@ -906,6 +906,7 @@ steps:
   - name: Build the boringcrypto Go builder
     environment:
       GODL_DIR: /tmp/push-build-darwin-amd64-fips/go/src/github.com/gravitational/godl
+      BORINGCRYPTO_BRANCH: dev.boringcrypto.go1.15
     commands:
       - set -exu
       - cd $GODL_DIR
@@ -919,8 +920,9 @@ steps:
         from_secret: AWS_ACCESS_KEY_ID
       AWS_SECRET_ACCESS_KEY:
         from_secret: AWS_SECRET_ACCESS_KEY
-      AWS_REGION: us-west-2
-      SDK_DIR: /Users/build/sdks/$BORINGCRYPTO_BRANCH
+      AWS_REGION: us-east-1
+      BORINGCRYPTO_BRANCH: dev.boringcrypto.go1.15
+      SDK_DIR: /Users/build/sdks/dev.boringcrypto.go1.15
       GODL_DIR: /tmp/push-build-darwin-amd64-fips/go/src/github.com/gravitational/godl
     commands:
       - set -exu
@@ -935,7 +937,7 @@ steps:
       GOPATH: /tmp/push-build-darwin-amd64-fips/go
       GOCACHE: /tmp/push-build-darwin-amd64-fips/go/cache
       # version of the Go builder
-      GO: /tmp/push-build-darwin-amd64-fips/go/src/github.com/gravitational/godl/build/$BORINGCRYPTO_BRANCH
+      GO: /tmp/push-build-darwin-amd64-fips/go/src/github.com/gravitational/godl/build/dev.boringcrypto.go1.15
       OS: darwin
       ARCH: amd64
       WORKSPACE_DIR: /tmp/push-build-darwin-amd64-fips
@@ -3001,7 +3003,7 @@ steps:
       WORKSPACE_DIR: /tmp/build-darwin-amd64-fips
       GOPATH: $WORKSPACE_DIR/go
       GOCACHE: $WORKSPACE_DIR/go/cache
-      GO: $WORKSPACE_DIR/go/src/github.com/gravitational/godl/build/$BORINGCRYPTO_BRANCH
+      GO: $WORKSPACE_DIR/go/src/github.com/gravitational/godl/build/dev.boringcrypto.go1.15
       OS: darwin
       ARCH: amd64
       FIPS: yes
@@ -4502,6 +4504,6 @@ volumes:
 
 ---
 kind: signature
-hmac: ad27743996bf03ef484b04a0865ba05573507c0fac208cc662b4a58241b02c54
+hmac: e32c19eb65b315aeb37983f97a33da798dbbc35dd5b7589d75c305a98d9dea20
 
 ...
