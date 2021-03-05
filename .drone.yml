@@ -887,7 +887,6 @@ steps:
       WORKSPACE_DIR: /tmp/push-build-darwin-amd64-fips
       TELEPORT_DIR: /tmp/push-build-darwin-amd64-fips/go/src/github.com/gravitational/teleport
       GODL_DIR: /tmp/push-build-darwin-amd64-fips/go/src/github.com/gravitational/godl
-      #GODL_COMMIT: 5b8115c1f2fc7c5e0792c662bc9816e171bc4b14
       GODL_COMMIT: dev.boringcrypto.go1.15
       BORINGCRYPTO_BRANCH: dev.boringcrypto.go1.15
     commands:
@@ -916,7 +915,7 @@ steps:
       GODL_DIR: /tmp/push-build-darwin-amd64-fips/go/src/github.com/gravitational/godl
       BORINGCRYPTO_BRANCH: dev.boringcrypto.go1.15
     commands:
-      - set -exu
+      - set -u
       - cd $GODL_DIR
       - mkdir build
       - go build -o $GODL_DIR/build/$BORINGCRYPTO_BRANCH $BORINGCRYPTO_BRANCH/main.go
@@ -944,14 +943,14 @@ steps:
     environment:
       GOPATH: /tmp/push-build-darwin-amd64-fips/go
       GOCACHE: /tmp/push-build-darwin-amd64-fips/go/cache
-      # version of the Go builder
+      # use custom Go compiler
       GO: /tmp/push-build-darwin-amd64-fips/go/src/github.com/gravitational/godl/build/dev.boringcrypto.go1.15
       OS: darwin
       ARCH: amd64
       WORKSPACE_DIR: /tmp/push-build-darwin-amd64-fips
       FIPS: "yes"
     commands:
-      - set -exu
+      - set -u
       - cd $WORKSPACE_DIR/go/src/github.com/gravitational/teleport
       - make clean release OS=$OS ARCH=$ARCH FIPS=$FIPS GO=$GO
 
@@ -2984,11 +2983,15 @@ steps:
       GITHUB_PRIVATE_KEY:
         from_secret: GITHUB_PRIVATE_KEY
       WORKSPACE_DIR: /tmp/build-darwin-amd64-fips
-      TELEPORT_DIR: $WORKSPACE_DIR/go/src/github.com/gravitational/teleport
-      GODL_DIR: $WORKSPACE_DIR/go/src/github.com/gravitational/godl
+      TELEPORT_DIR: /tmp/build-darwin-amd64-fips/go/src/github.com/gravitational/teleport
+      GODL_DIR: /tmp/build-darwin-amd64-fips/go/src/github.com/gravitational/godl
+      GODL_COMMIT: dev.boringcrypto.go1.15
     commands:
       - set -u
       - mkdir -p $TELEPORT_DIR $GODL_DIR
+      - cd $GODL_DIR
+      - git clone https://github.com/gravitational/godl.git .
+      - git checkout $GODL_COMMIT
       - cd $TELEPORT_DIR
       - git clone https://github.com/gravitational/${DRONE_REPO_NAME}.git .
       - git checkout ${DRONE_TAG:-$DRONE_COMMIT}
@@ -3006,12 +3009,42 @@ steps:
       - echo "${DRONE_TAG##v}" > $WORKSPACE_DIR/go/.version.txt
       - cat $WORKSPACE_DIR/go/.version.txt
 
+  - name: Build the boringcrypto Go builder
+    environment:
+      GODL_DIR: /tmp/build-darwin-amd64-fips/go/src/github.com/gravitational/godl
+      BORINGCRYPTO_BRANCH: dev.boringcrypto.go1.15
+    commands:
+      - set -u
+      - cd $GODL_DIR
+      - mkdir build
+      - go build -o $GODL_DIR/build/$BORINGCRYPTO_BRANCH $BORINGCRYPTO_BRANCH/main.go
+
+  - name: Pull boringcrypto build tarball from S3
+    environment:
+      AWS_S3_BUCKET:
+        from_secret: AWS_S3_BUCKET
+      AWS_ACCESS_KEY_ID:
+        from_secret: AWS_ACCESS_KEY_ID
+      AWS_SECRET_ACCESS_KEY:
+        from_secret: AWS_SECRET_ACCESS_KEY
+      AWS_REGION: us-west-2
+      BORINGCRYPTO_BRANCH: dev.boringcrypto.go1.15
+      GODL_DIR: /tmp/build-darwin-amd64-fips/go/src/github.com/gravitational/godl
+    commands:
+      - set -u
+      - mkdir -p $HOME/sdk/dev.boringcrypto.go1.15
+      - cd $HOME/sdk/dev.boringcrypto.go1.15
+      - aws s3 cp s3://$AWS_S3_BUCKET/ci/go/$BORINGCRYPTO_BRANCH-darwin-amd64.tar.gz .
+      - aws s3 cp s3://$AWS_S3_BUCKET/ci/go/$BORINGCRYPTO_BRANCH-darwin-amd64.tar.gz.sha256 .
+      - $GODL_DIR/build/$BORINGCRYPTO_BRANCH download
+
   - name: Build Mac release artifacts
     environment:
       WORKSPACE_DIR: /tmp/build-darwin-amd64-fips
-      GOPATH: $WORKSPACE_DIR/go
-      GOCACHE: $WORKSPACE_DIR/go/cache
-      GO: $WORKSPACE_DIR/go/src/github.com/gravitational/godl/build/dev.boringcrypto.go1.15
+      GOPATH: /tmp/build-darwin-amd64-fips/go
+      GOCACHE: /tmp/build-darwin-amd64-fips/go/cache
+      # use custom Go compiler
+      GO: /tmp/build-darwin-amd64-fips/go/src/github.com/gravitational/godl/build/dev.boringcrypto.go1.15
       OS: darwin
       ARCH: amd64
       FIPS: yes
@@ -4512,6 +4545,6 @@ volumes:
 
 ---
 kind: signature
-hmac: 9cd3b0824b1c44be3b417094969e0b6135379f93baef95da40a1e41cc0417548
+hmac: 4de6e23f07c39f31ba198911650235dbfac8c422264c615805eda6a720d5f2dd
 
 ...
