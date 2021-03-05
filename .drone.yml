@@ -879,18 +879,15 @@ steps:
       GITHUB_PRIVATE_KEY:
         from_secret: GITHUB_PRIVATE_KEY
       WORKSPACE_DIR: /tmp/push-build-darwin-amd64-fips
-      TELEPORT_DIR: $WORKSPACE_DIR/go/src/github.com/gravitational/teleport
-      GODL_DIR: $WORKSPACE_DIR/go/src/github.com/gravitational/godl
+      TELEPORT_DIR: /tmp/push-build-darwin-amd64-fips/go/src/github.com/gravitational/teleport
+      GODL_DIR: /tmp/push-build-darwin-amd64-fips/go/src/github.com/gravitational/godl
       GODL_COMMIT: 5b8115c1f2fc7c5e0792c662bc9816e171bc4b14
     commands:
-      - set -u
+      - set -exu
       - mkdir -p $TELEPORT_DIR $GODL_DIR
       - cd $TELEPORT_DIR
       - git clone https://github.com/gravitational/teleport.git .
       - git checkout ${DRONE_TAG:-$DRONE_COMMIT}
-      - cd $GODL_DIR
-      - git clone https://github.com/gravitational/godl.git .
-      - git checkout $GODL_COMMIT
       # fetch enterprise submodules
       # suppressing the newline on the end of the private key makes git operations fail on MacOS
       # with an error like 'Load key "/path/.ssh/id_rsa": invalid format'
@@ -902,6 +899,9 @@ steps:
       - GIT_SSH_COMMAND='ssh -i $WORKSPACE_DIR/.ssh/id_rsa -o UserKnownHostsFile=$WORKSPACE_DIR/.ssh/known_hosts -F /dev/null' git submodule update --init --recursive webassets || true
       - rm -rf $WORKSPACE_DIR/.ssh
       - mkdir -p $WORKSPACE_DIR/go/cache
+      - cd $GODL_DIR
+      - git clone https://github.com/gravitational/godl.git .
+      - git checkout $GODL_COMMIT
 
   - name: Build the boringcrypto Go builder
     environment:
@@ -952,18 +952,18 @@ steps:
       - chmod -R u+rw $WORKSPACE_DIR
       - rm -rf $WORKSPACE_DIR/go $WORKSPACE_DIR/.ssh
 
-  - name: Send Slack notification (exec)
-    environment:
-      SLACK_WEBHOOK:
-        from_secret: SLACK_WEBHOOK_DEV_TELEPORT
-    commands:
-      - |
-        export DRONE_BUILD_LINK="${DRONE_SYSTEM_PROTO}://${DRONE_SYSTEM_HOSTNAME}/${DRONE_REPO_OWNER}/${DRONE_REPO_NAME}/${DRONE_BUILD_NUMBER}"
-        export GOOS=$(go env GOOS)
-        export GOARCH=$(go env GOARCH)
-        curl -sL -X POST -H 'Content-type: application/json' --data "{\"text\":\"Warning: \`$GOOS-$GOARCH\` artifact build failed for [\`${DRONE_REPO_NAME}\`] - please investigate immediately!\nBranch: \`${DRONE_BRANCH}\`\nCommit: \`${DRONE_COMMIT_SHA}\`\nLink: $DRONE_BUILD_LINK\"}" $SLACK_WEBHOOK
-    when:
-      status: [failure]
+  #- name: Send Slack notification (exec)
+  #  environment:
+  #    SLACK_WEBHOOK:
+  #      from_secret: SLACK_WEBHOOK_DEV_TELEPORT
+  #  commands:
+  #    - |
+  #      export DRONE_BUILD_LINK="${DRONE_SYSTEM_PROTO}://${DRONE_SYSTEM_HOSTNAME}/${DRONE_REPO_OWNER}/${DRONE_REPO_NAME}/${DRONE_BUILD_NUMBER}"
+  #      export GOOS=$(go env GOOS)
+  #      export GOARCH=$(go env GOARCH)
+  #      curl -sL -X POST -H 'Content-type: application/json' --data "{\"text\":\"Warning: \`$GOOS-$GOARCH\` artifact build failed for [\`${DRONE_REPO_NAME}\`] - please investigate immediately!\nBranch: \`${DRONE_BRANCH}\`\nCommit: \`${DRONE_COMMIT_SHA}\`\nLink: $DRONE_BUILD_LINK\"}" $SLACK_WEBHOOK
+  #  when:
+  #    status: [failure]
 
 ---
 kind: pipeline
