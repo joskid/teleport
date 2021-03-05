@@ -931,12 +931,11 @@ steps:
         from_secret: AWS_SECRET_ACCESS_KEY
       AWS_REGION: us-west-2
       BORINGCRYPTO_BRANCH: dev.boringcrypto.go1.15
-      SDK_DIR: /Users/build/sdk/dev.boringcrypto.go1.15
       GODL_DIR: /tmp/push-build-darwin-amd64-fips/go/src/github.com/gravitational/godl
     commands:
       - set -u
-      - mkdir -p $SDK_DIR
-      - cd $SDK_DIR
+      - mkdir -p $HOME/sdk/dev.boringcrypto.go1.15
+      - cd $HOME/sdk/dev.boringcrypto.go1.15
       - aws s3 cp s3://$AWS_S3_BUCKET/ci/go/$BORINGCRYPTO_BRANCH-darwin-amd64.tar.gz .
       - aws s3 cp s3://$AWS_S3_BUCKET/ci/go/$BORINGCRYPTO_BRANCH-darwin-amd64.tar.gz.sha256 .
       - $GODL_DIR/build/$BORINGCRYPTO_BRANCH download
@@ -4513,6 +4512,6 @@ volumes:
 
 ---
 kind: signature
-hmac: 82a6a24fe1c5225a0859b1f50a3d8e8d13da5de1786a8cddcdc8b5c27a3dbe5a
+hmac: 9cd3b0824b1c44be3b417094969e0b6135379f93baef95da40a1e41cc0417548
 
 ...
