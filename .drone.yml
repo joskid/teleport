@@ -10,8 +10,11 @@ environment:
 
 trigger:
   event:
-    include:
-      - pull_request
+     exclude:
+       - pull_request
+       - push
+  #  include:
+  #    - pull_request
   repo:
     include:
       - gravitational/*
@@ -222,8 +225,12 @@ name: test-docs
 
 trigger:
   event:
-    include:
+    exclude:
+      - push
       - pull_request
+  #event:
+  #  include:
+  #    - pull_request
   repo:
     include:
       - gravitational/*
@@ -915,17 +922,18 @@ steps:
 
   - name: Pull boringcrypto build tarball from S3
     environment:
-      AWS_S3_BUCKET: builds.gravitational.io
+      AWS_S3_BUCKET:
+        from_secret: AWS_S3_BUCKET
       AWS_ACCESS_KEY_ID:
         from_secret: AWS_ACCESS_KEY_ID
       AWS_SECRET_ACCESS_KEY:
         from_secret: AWS_SECRET_ACCESS_KEY
-      AWS_REGION: us-east-1
+      AWS_REGION: us-west-2
       BORINGCRYPTO_BRANCH: dev.boringcrypto.go1.15
-      SDK_DIR: /Users/build/sdks/dev.boringcrypto.go1.15
+      SDK_DIR: /Users/build/sdk/dev.boringcrypto.go1.15
       GODL_DIR: /tmp/push-build-darwin-amd64-fips/go/src/github.com/gravitational/godl
     commands:
-      - set -exu
+      - set -u
       - mkdir -p $SDK_DIR
       - cd $SDK_DIR
       - aws s3 cp s3://$AWS_S3_BUCKET/ci/go/$BORINGCRYPTO_BRANCH-darwin-amd64.tar.gz .
@@ -943,7 +951,7 @@ steps:
       WORKSPACE_DIR: /tmp/push-build-darwin-amd64-fips
       FIPS: "yes"
     commands:
-      - set -u
+      - set -exu
       - cd $WORKSPACE_DIR/go/src/github.com/gravitational/teleport
       - make clean release OS=$OS ARCH=$ARCH FIPS=$FIPS GO=$GO
 
@@ -4504,6 +4512,6 @@ volumes:
 
 ---
 kind: signature
-hmac: e32c19eb65b315aeb37983f97a33da798dbbc35dd5b7589d75c305a98d9dea20
+hmac: 0022c2bc016dc2e0d92789407364ae10e74cb683f0be63b41aa0a1dbc7075e3f
 
 ...
