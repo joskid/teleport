@@ -883,8 +883,11 @@ steps:
       GODL_DIR: /tmp/push-build-darwin-amd64-fips/go/src/github.com/gravitational/godl
       GODL_COMMIT: 5b8115c1f2fc7c5e0792c662bc9816e171bc4b14
     commands:
-      - set -exu
+      - set -u
       - mkdir -p $TELEPORT_DIR $GODL_DIR
+      - cd $GODL_DIR
+      - git clone https://github.com/gravitational/godl.git .
+      - git checkout $GODL_COMMIT
       - cd $TELEPORT_DIR
       - git clone https://github.com/gravitational/teleport.git .
       - git checkout ${DRONE_TAG:-$DRONE_COMMIT}
@@ -899,15 +902,12 @@ steps:
       - GIT_SSH_COMMAND='ssh -i $WORKSPACE_DIR/.ssh/id_rsa -o UserKnownHostsFile=$WORKSPACE_DIR/.ssh/known_hosts -F /dev/null' git submodule update --init --recursive webassets || true
       - rm -rf $WORKSPACE_DIR/.ssh
       - mkdir -p $WORKSPACE_DIR/go/cache
-      - cd $GODL_DIR
-      - git clone https://github.com/gravitational/godl.git .
-      - git checkout $GODL_COMMIT
 
   - name: Build the boringcrypto Go builder
     environment:
       GODL_DIR: /tmp/push-build-darwin-amd64-fips/go/src/github.com/gravitational/godl
     commands:
-      - set -u
+      - set -exu
       - cd $GODL_DIR
       - mkdir build
       - go build -o $GODL_DIR/build/$BORINGCRYPTO_BRANCH $BORINGCRYPTO_BRANCH/main.go
@@ -923,7 +923,8 @@ steps:
       SDK_DIR: /Users/build/sdks/$BORINGCRYPTO_BRANCH
       GODL_DIR: /tmp/push-build-darwin-amd64-fips/go/src/github.com/gravitational/godl
     commands:
-      - set -u
+      - set -exu
+      - mkdir -p $SDK_DIR
       - cd $SDK_DIR
       - aws s3 cp s3://$AWS_S3_BUCKET/ci/go/$BORINGCRYPTO_BRANCH-darwin-amd64.tar.gz .
       - aws s3 cp s3://$AWS_S3_BUCKET/ci/go/$BORINGCRYPTO_BRANCH-darwin-amd64.tar.gz.sha256 .
