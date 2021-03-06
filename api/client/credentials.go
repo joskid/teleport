@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"io/ioutil"
+	"time"
 
 	"github.com/gravitational/teleport/api/constants"
 
@@ -30,8 +31,8 @@ import (
 
 // Credentials are used to authenticate to Auth.
 type Credentials interface {
-	// Dialer is used to dial a connection to Auth.
-	Dialer() (ContextDialer, error)
+	// Dialer is used to create a dialer used to connect to Auth.
+	Dialer(keepAliveInterval, dialTimeout time.Duration) (ContextDialer, error)
 	// TLSConfig returns TLS configuration used to connect to Auth.
 	TLSConfig() (*tls.Config, error)
 	// SSHClientConfig returns SSH configuration used to connect to Proxy through tunnel.
@@ -52,7 +53,7 @@ type TLSConfigCreds struct {
 }
 
 // Dialer is used to dial a connection to Auth.
-func (c *TLSConfigCreds) Dialer() (ContextDialer, error) {
+func (c *TLSConfigCreds) Dialer(keepAliveInterval, dialTimeout time.Duration) (ContextDialer, error) {
 	return nil, trace.NotImplemented("no dialer")
 }
 
@@ -87,7 +88,7 @@ type KeyPairCreds struct {
 }
 
 // Dialer is used to dial a connection to Auth.
-func (c *KeyPairCreds) Dialer() (ContextDialer, error) {
+func (c *KeyPairCreds) Dialer(keepAliveInterval, dialTimeout time.Duration) (ContextDialer, error) {
 	return nil, trace.NotImplemented("no dialer")
 }
 
@@ -133,7 +134,7 @@ type IdentityCreds struct {
 }
 
 // Dialer is used to dial a connection to Auth.
-func (c *IdentityCreds) Dialer() (ContextDialer, error) {
+func (c *IdentityCreds) Dialer(keepAliveInterval, dialTimeout time.Duration) (ContextDialer, error) {
 	return nil, trace.NotImplemented("no dialer")
 }
 
@@ -160,6 +161,68 @@ func (c *IdentityCreds) SSHClientConfig() (*ssh.ClientConfig, error) {
 	}
 
 	sshConfig, err := identityFile.SSHClientConfig()
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return sshConfig, nil
+}
+
+// LoadProfile is used to load credentials from a tsh Profile.
+// If dir is not specified, the default profile path will be used.
+// If name is not specified, the current profile name will be used.
+func LoadProfile(dir, name string) *ProfileCreds {
+	return &ProfileCreds{
+		dir:  dir,
+		name: name,
+	}
+}
+
+// ProfileCreds are used to authenticate the client
+// with a tsh profile with the given directory and name.
+type ProfileCreds struct {
+	dir  string
+	name string
+}
+
+// Dialer is used to dial a connection to Auth.
+func (c *ProfileCreds) Dialer(keepAliveInterval, dialTimeout time.Duration) (ContextDialer, error) {
+	profile, err := ProfileFromDir(c.dir, c.name)
+	if err != nil {
+		return nil, trace.BadParameter("profile could not be decoded: %v", err)
+	}
+
+	sshConfig, err := profile.SSHClientConfig()
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return NewTunnelDialer(*sshConfig, keepAliveInterval, dialTimeout), nil
+}
+
+// TLSConfig returns TLS configuration used to connect to Auth.
+func (c *ProfileCreds) TLSConfig() (*tls.Config, error) {
+	profile, err := ProfileFromDir(c.dir, c.name)
+	if err != nil {
+		return nil, trace.BadParameter("profile could not be decoded: %v", err)
+	}
+
+	tlsConfig, err := profile.TLSConfig()
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return configure(tlsConfig), nil
+}
+
+// SSHClientConfig returns SSH configuration used to connect to Proxy.
+func (c *ProfileCreds) SSHClientConfig() (*ssh.ClientConfig, error) {
+	profile, err := ProfileFromDir(c.dir, c.name)
+	if err != nil {
+		return nil, trace.BadParameter("profile could not be decoded: %v", err)
+	}
+
+	sshConfig, err := profile.SSHClientConfig()
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}

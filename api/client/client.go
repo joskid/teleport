@@ -194,7 +194,7 @@ func connect(ctx context.Context, cfg Config) (*Client, error) {
 			}
 
 			// Connect with dialer provided in creds.
-			if dialer, err := creds.Dialer(); err == nil {
+			if dialer, err := creds.Dialer(cfg.KeepAlivePeriod, cfg.DialTimeout); err == nil {
 				syncConnect(constants.APIDomain, &Client{
 					c:         cfg,
 					tlsConfig: tlsConfig,
