@@ -84,6 +84,7 @@ func (s *Server) newSession(ctx context.Context, identity *tlsca.Identity, app *
 	fwd, err := forward.New(
 		forward.RoundTripper(transport),
 		forward.Logger(logrus.StandardLogger()),
+		forward.WebsocketRewriter(transport.wsRewriter),
 	)
 	if err != nil {
 		return nil, trace.Wrap(err)

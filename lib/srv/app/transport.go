@@ -31,6 +31,7 @@ import (
 	"github.com/gravitational/teleport/lib/services"
 	"github.com/gravitational/teleport/lib/utils"
 
+	"github.com/gravitational/oxy/forward"
 	"github.com/gravitational/trace"
 )
 
@@ -77,6 +78,8 @@ type transport struct {
 	tr http.RoundTripper
 
 	uri *url.URL
+
+	wsRewriter forward.ReqRewriter
 }
 
 // newTransport creates a new transport.
@@ -106,6 +109,9 @@ func newTransport(ctx context.Context, c *transportConfig) (*transport, error) {
 		c:            c,
 		uri:          uri,
 		tr:           tr,
+		wsRewriter: &websocketsRewriter{
+			uri: uri,
+		},
 	}, nil
 }
 
@@ -279,4 +285,17 @@ func isRedirect(code int) bool {
 		return true
 	}
 	return false
+}
+
+// websocketsRewriter rewrites websocket requests going through app access.
+//
+// Implements forward.ReqRewriter.
+type websocketsRewriter struct {
+	uri *url.URL
+}
+
+// Rewrite rewrites the websockets request.
+func (r *websocketsRewriter) Rewrite(req *http.Request) {
+	// Update host to the target app's host to make sure it's forwarded correctly.
+	req.URL.Host = r.uri.Host
 }

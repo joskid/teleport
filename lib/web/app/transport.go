@@ -156,6 +156,23 @@ func (t *transport) rewriteRequest(r *http.Request) error {
 	return nil
 }
 
+// websocketsDialer returns a function that dials a websocket connection
+// over the transport's reverse tunnel.
+func (t *transport) websocketsDialer() forward.Dialer {
+	return func(network, address string) (net.Conn, error) {
+		tr, ok := t.tr.(*http.Transport)
+		if !ok {
+			return nil, trace.BadParameter("expected *http.Transport, got %T", t.tr)
+		}
+		conn, err := tr.DialContext(context.Background(), network, address)
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+		// App access connections over reverse tunnel use mutual TLS.
+		return tls.Client(conn, tr.TLSClientConfig), nil
+	}
+}
+
 // dialFunc returns a function that can Dial and connect to the application
 // service over the reverse tunnel subsystem.
 func dialFunc(c *transportConfig) func(ctx context.Context, network string, addr string) (net.Conn, error) {
