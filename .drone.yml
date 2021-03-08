@@ -934,7 +934,7 @@ steps:
       GOPATH: /tmp/push-build-darwin-amd64-fips/go
       GOCACHE: /tmp/push-build-darwin-amd64-fips/go/cache
       # use custom Go compiler
-      GO: /tmp/push-build-darwin-amd64-fips/go/src/github.com/gravitational/godl/build/dev.boringcrypto.go1.15
+      GO_BINARY: /tmp/push-build-darwin-amd64-fips/go/src/github.com/gravitational/godl/build/dev.boringcrypto.go1.15
       OS: darwin
       ARCH: amd64
       WORKSPACE_DIR: /tmp/push-build-darwin-amd64-fips
@@ -942,7 +942,7 @@ steps:
     commands:
       - set -u
       - cd $WORKSPACE_DIR/go/src/github.com/gravitational/teleport
-      - make clean release OS=$OS ARCH=$ARCH FIPS=$FIPS GO=$GO
+      - make clean release OS=$OS ARCH=$ARCH FIPS=$FIPS GO_BINARY=$GO_BINARY
 
   - name: Clean up exec runner storage (post)
     environment:
@@ -3033,7 +3033,7 @@ steps:
       GOPATH: /tmp/build-darwin-amd64-fips/go
       GOCACHE: /tmp/build-darwin-amd64-fips/go/cache
       # use custom Go compiler
-      GO: /tmp/build-darwin-amd64-fips/go/src/github.com/gravitational/godl/build/dev.boringcrypto.go1.15
+      GO_BINARY: /tmp/build-darwin-amd64-fips/go/src/github.com/gravitational/godl/build/dev.boringcrypto.go1.15
       OS: darwin
       ARCH: amd64
       WORKSPACE_DIR: /tmp/build-darwin-amd64-fips
@@ -3041,7 +3041,7 @@ steps:
     commands:
       - set -u
       - cd $WORKSPACE_DIR/go/src/github.com/gravitational/teleport
-      - make clean release OS=$OS ARCH=$ARCH FIPS=$FIPS GO=$GO
+      - make clean release OS=$OS ARCH=$ARCH FIPS=$FIPS GO_BINARY=$GO_BINARY
 
   - name: Copy Mac artifacts
     environment:
@@ -4666,6 +4666,6 @@ volumes:
 
 ---
 kind: signature
-hmac: 326b07b50ed00dc2ed2c621c2224b03db31c2c0c55e08411654583dac3f28903
+hmac: f5ccd1c8489a5c5ed2b663af6ef88928119438cdfdad882ec0fccd8f01a9bd4b
 
 ...
