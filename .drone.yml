@@ -10,11 +10,8 @@ environment:
 
 trigger:
   event:
-     exclude:
-       - pull_request
-       - push
-  #  include:
-  #    - pull_request
+    include:
+      - pull_request
   repo:
     include:
       - gravitational/*
@@ -225,12 +222,8 @@ name: test-docs
 
 trigger:
   event:
-    exclude:
-      - push
+    include:
       - pull_request
-  #event:
-  #  include:
-  #    - pull_request
   repo:
     include:
       - gravitational/*
@@ -851,11 +844,9 @@ platform:
 trigger:
   event:
     include:
+      - push
+    exclude:
       - pull_request
-    #include:
-    #  - push
-    #exclude:
-    #  - pull_request
   branch:
     include:
       - master
@@ -961,18 +952,18 @@ steps:
       - chmod -R u+rw $WORKSPACE_DIR
       - rm -rf $WORKSPACE_DIR/go $WORKSPACE_DIR/.ssh
 
-  #- name: Send Slack notification (exec)
-  #  environment:
-  #    SLACK_WEBHOOK:
-  #      from_secret: SLACK_WEBHOOK_DEV_TELEPORT
-  #  commands:
-  #    - |
-  #      export DRONE_BUILD_LINK="${DRONE_SYSTEM_PROTO}://${DRONE_SYSTEM_HOSTNAME}/${DRONE_REPO_OWNER}/${DRONE_REPO_NAME}/${DRONE_BUILD_NUMBER}"
-  #      export GOOS=$(go env GOOS)
-  #      export GOARCH=$(go env GOARCH)
-  #      curl -sL -X POST -H 'Content-type: application/json' --data "{\"text\":\"Warning: \`$GOOS-$GOARCH\` artifact build failed for [\`${DRONE_REPO_NAME}\`] - please investigate immediately!\nBranch: \`${DRONE_BRANCH}\`\nCommit: \`${DRONE_COMMIT_SHA}\`\nLink: $DRONE_BUILD_LINK\"}" $SLACK_WEBHOOK
-  #  when:
-  #    status: [failure]
+  - name: Send Slack notification (exec)
+    environment:
+      SLACK_WEBHOOK:
+        from_secret: SLACK_WEBHOOK_DEV_TELEPORT
+    commands:
+      - |
+        export DRONE_BUILD_LINK="${DRONE_SYSTEM_PROTO}://${DRONE_SYSTEM_HOSTNAME}/${DRONE_REPO_OWNER}/${DRONE_REPO_NAME}/${DRONE_BUILD_NUMBER}"
+        export GOOS=$(go env GOOS)
+        export GOARCH=$(go env GOARCH)
+        curl -sL -X POST -H 'Content-type: application/json' --data "{\"text\":\"Warning: \`$GOOS-$GOARCH\` artifact build failed for [\`${DRONE_REPO_NAME}\`] - please investigate immediately!\nBranch: \`${DRONE_BRANCH}\`\nCommit: \`${DRONE_COMMIT_SHA}\`\nLink: $DRONE_BUILD_LINK\"}" $SLACK_WEBHOOK
+    when:
+      status: [failure]
 
 ---
 kind: pipeline
@@ -4675,6 +4666,6 @@ volumes:
 
 ---
 kind: signature
-hmac: 44f31ce8da9e2c300ffe6c2744e51d5f890693496ff7a153ecda62a36f96c72a
+hmac: 326b07b50ed00dc2ed2c621c2224b03db31c2c0c55e08411654583dac3f28903
 
 ...
