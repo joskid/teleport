@@ -111,7 +111,7 @@ func (s *BackendSuite) CRUD(c *check.C) {
 
 	data := make([]byte, 1024)
 	rand.Read(data)
-	item = backend.Item{Key: prefix(string(key)), Value: data}
+	item = backend.Item{Key: prefix(key), Value: data}
 	_, err = s.B.Put(ctx, item)
 	c.Assert(err, check.IsNil)
 
