@@ -736,19 +736,6 @@ func (s *BackendSuite) Mirror(c *check.C, b backend.Backend) {
 	c.Assert(item.ID, check.Equals, originalID)
 }
 
-// MakeBinaryPrefix returns function that prepends unique,
-// not-guaranteed-to-be-UTF8 prefix to any key, used to make
-// test suite concurrent-run proof
-func MakeBinaryPrefix() func(k string) []byte {
-	id := make([]byte, 20)
-	id[0] = '/'
-	rand.Read(id[1:])
-
-	return func(k string) []byte {
-		return append(id, []byte(k)...)
-	}
-}
-
 // MakePrefix returns function that appends unique prefix
 // to any key, used to make test suite concurrent-run proof
 func MakePrefix() func(k string) []byte {
