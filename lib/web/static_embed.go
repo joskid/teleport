@@ -1,7 +1,7 @@
-// +build !webassets_embed
+// +build webassets_embed
 
 /*
-Copyright 2021 Gravitational, Inc.
+Copyright 2015 Gravitational, Inc.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,13 +19,16 @@ limitations under the License.
 package web
 
 import (
+	"bytes"
+	_ "embed"
 	"net/http"
-
-	"github.com/gravitational/trace"
 )
 
-// NewStaticFileSystem is a no-op in this build mode.
+//go:embed build/webassets.zip
+var webassetsZip []byte
+
+// NewStaticFileSystem returns the initialized implementation of http.FileSystem
+// interface which can be used to serve Teleport Proxy Web UI
 func NewStaticFileSystem() (http.FileSystem, error) {
-	const webAssetsMissingError = "the teleport binary was built without web assets, try building with `make release`"
-	return nil, trace.NotFound(webAssetsMissingError)
+	return readZipArchive(bytes.NewReader(webassetsZip), int64(len(webassetsZip)))
 }
