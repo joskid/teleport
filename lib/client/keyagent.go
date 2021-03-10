@@ -17,7 +17,6 @@ limitations under the License.
 package client
 
 import (
-	"crypto/x509"
 	"fmt"
 	"io"
 	"net"
@@ -102,7 +101,7 @@ func NewKeyStoreCertChecker(keyStore LocalKeyStore) ssh.HostKeyCallback {
 
 // NewLocalAgent reads all Teleport certificates from disk (using FSLocalKeyStore),
 // creates a LocalKeyAgent, loads all certificates into it, and returns the agent.
-func NewLocalAgent(keyDir, proxyHost, username string, useLocalSSHAgent bool) (a *LocalKeyAgent, err error) {
+func NewLocalAgent(keyDir, proxyHost, username string, useSystemSSHAgent bool) (a *LocalKeyAgent, err error) {
 	keystore, err := NewFSLocalKeyStore(keyDir)
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -119,36 +118,18 @@ func NewLocalAgent(keyDir, proxyHost, username string, useLocalSSHAgent bool) (a
 		proxyHost: proxyHost,
 	}
 
-	if useLocalSSHAgent {
+	if useSystemSSHAgent {
 		a.sshAgent = connectToSSHAgent()
 	} else {
-		log.Debug("Skipping connection to the local ssh-agent.")
+		log.Debug("Skipping connection to the system ssh-agent.")
 	}
 
-	// unload all teleport keys from the agent first to ensure
-	// we don't leave stale keys in the agent
+	// Unload all teleport keys from the agent to ensure we don't leave stale
+	// keys in the agent.
 	err = a.UnloadKeys()
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
-
-	// read in key for this user in proxy
-	key, err := a.GetKey()
-	if err != nil {
-		if trace.IsNotFound(err) {
-			return a, nil
-		}
-		return nil, trace.Wrap(err)
-	}
-
-	a.log.Infof("Loading key for %q", username)
-
-	// load key into the agent
-	_, err = a.LoadKey(*key)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
 	return a, nil
 }
 
@@ -157,9 +138,21 @@ func (a *LocalKeyAgent) UpdateProxyHost(proxyHost string) {
 	a.proxyHost = proxyHost
 }
 
+// LoadKeyForCluster fetches a cluster-specific SSH key loads it into the SSH
+// agents using LoadKey.
+func (a *LocalKeyAgent) LoadKeyForCluster(clusterName string) (*agent.AddedKey, error) {
+	key, err := a.GetKey(clusterName, WithSSHCerts{})
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	return a.LoadKey(*key)
+}
+
 // LoadKey adds a key into the Teleport ssh agent as well as the system ssh
 // agent.
 func (a *LocalKeyAgent) LoadKey(key Key) (*agent.AddedKey, error) {
+	a.log.Infof("Loading SSH key for user %q and cluster %q", a.username, key.ClusterName)
+
 	agents := []agent.Agent{a.Agent}
 	if a.sshAgent != nil {
 		agents = append(agents, a.sshAgent)
@@ -252,13 +245,10 @@ func (a *LocalKeyAgent) UnloadKeys() error {
 	return nil
 }
 
-// GetKey returns the key for this user in a proxy from the filesystem keystore
-// at ~/.tsh.
-//
-// clusterName is an optional teleport cluster name to load kubernetes
-// certificates for.
-func (a *LocalKeyAgent) GetKey(opts ...KeyOption) (*Key, error) {
-	return a.keyStore.GetKey(a.proxyHost, a.username, opts...)
+// GetKey returns the key for the given cluster of the proxy from
+// the filesystem keystore at ~/.tsh.
+func (a *LocalKeyAgent) GetKey(clusterName string, opts ...CertOption) (*Key, error) {
+	return a.keyStore.GetKey(a.proxyHost, a.username, clusterName, opts...)
 }
 
 // AddHostSignersToCache takes a list of CAs whom we trust. This list is added to a database
@@ -287,10 +277,6 @@ func (a *LocalKeyAgent) AddHostSignersToCache(certAuthorities []auth.TrustedCert
 
 func (a *LocalKeyAgent) SaveCerts(certAuthorities []auth.TrustedCerts) error {
 	return a.keyStore.SaveCerts(a.proxyHost, certAuthorities)
-}
-
-func (a *LocalKeyAgent) GetCerts() (*x509.CertPool, error) {
-	return a.keyStore.GetCerts(a.proxyHost)
 }
 
 func (a *LocalKeyAgent) GetCertsPEM() ([][]byte, error) {
@@ -401,7 +387,7 @@ func (a *LocalKeyAgent) defaultHostPromptFunc(host string, key ssh.PublicKey, wr
 }
 
 // AddKey activates a new signed session key by adding it into the keystore and also
-// by loading it into the SSH agent
+// by loading it into the SSH agent.
 func (a *LocalKeyAgent) AddKey(key *Key) (*agent.AddedKey, error) {
 	// save it to disk (usually into ~/.tsh)
 	err := a.keyStore.AddKey(a.proxyHost, a.username, key)
@@ -413,14 +399,11 @@ func (a *LocalKeyAgent) AddKey(key *Key) (*agent.AddedKey, error) {
 	return a.LoadKey(*key)
 }
 
-// DeleteKey removes the key from the key store as well as unloading the key
-// from the agent.
-//
-// clusterName is an optional teleport cluster name to delete kubernetes
-// certificates for.
-func (a *LocalKeyAgent) DeleteKey(opts ...KeyOption) error {
+// DeleteKey removes the key with all its certs from the key store
+// and unloads the key from the agent.
+func (a *LocalKeyAgent) DeleteKey() error {
 	// remove key from key store
-	err := a.keyStore.DeleteKey(a.proxyHost, a.username, opts...)
+	err := a.keyStore.DeleteKey(a.proxyHost, a.username)
 	if err != nil {
 		return trace.Wrap(err)
 	}
@@ -433,6 +416,13 @@ func (a *LocalKeyAgent) DeleteKey(opts ...KeyOption) error {
 	}
 
 	return nil
+}
+
+// DeleteCerts deletes only the specified certs of the user's key,
+// keeping the private key intact.
+func (a *LocalKeyAgent) DeleteCerts(opts ...CertOption) error {
+	err := a.keyStore.DeleteCerts(a.proxyHost, a.username, opts...)
+	return trace.Wrap(err)
 }
 
 // DeleteKeys removes all keys from the keystore as well as unloads keys

@@ -18,7 +18,6 @@ package client
 
 import (
 	"bufio"
-	"crypto/x509"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -42,12 +41,13 @@ import (
 
 const (
 	defaultKeyDir      = ProfileDir
-	fileExtTLSCert     = "-x509.pem"
-	fileExtCert        = "-cert.pub"
 	fileExtPub         = ".pub"
+	fileExtSSHCert     = "-cert.pub"
+	fileExtTLSCert     = "-x509.pem"
 	sessionKeyDir      = "keys"
 	fileNameKnownHosts = "known_hosts"
 	fileNameTLSCerts   = "certs.pem"
+	sshDirSuffix       = "-ssh"
 	kubeDirSuffix      = "-kube"
 	dbDirSuffix        = "-db"
 
@@ -70,15 +70,15 @@ type LocalKeyStore interface {
 	// storage backend.
 	AddKey(proxy string, username string, key *Key) error
 
-	// GetKey returns the session key for the given username and proxy.
-	GetKey(proxy, username string, opts ...KeyOption) (*Key, error)
+	// GetKey returns the user's key including the specified certs.
+	GetKey(proxy, username, clusterName string, opts ...CertOption) (*Key, error)
 
-	// DeleteKey removes a specific session key from a proxy.
-	DeleteKey(proxyHost, username string, opts ...KeyOption) error
+	// DeleteKey deletes the user's key with all its certs.
+	DeleteKey(proxyHost, username string) error
 
-	// DeleteKeyOption deletes only secrets specified by the provided key
-	// options keeping user's SSH/TLS certificates and private key intact.
-	DeleteKeyOption(proxyHost, username string, opts ...KeyOption) error
+	// DeleteCerts deletes only the specified certs of the user's key,
+	// keeping the private key intact.
+	DeleteCerts(proxyHost, username string, opts ...CertOption) error
 
 	// DeleteKeys removes all session keys from disk.
 	DeleteKeys() error
@@ -93,9 +93,6 @@ type LocalKeyStore interface {
 	// SaveCerts saves trusted TLS certificates of certificate authorities.
 	SaveCerts(proxy string, cas []auth.TrustedCerts) error
 
-	// GetCerts gets trusted TLS certificates of certificate authorities.
-	GetCerts(proxy string) (*x509.CertPool, error)
-
 	// GetCertsPEM gets trusted TLS certificates of certificate authorities.
 	// Each returned byte slice contains an individual PEM block.
 	GetCertsPEM(proxy string) ([][]byte, error)
@@ -107,30 +104,33 @@ type LocalKeyStore interface {
 // ~/.tsh/
 // ├── known_hosts                   --> trusted certificate authorities (their keys) in a format similar to known_hosts
 // └── keys
-//    ├── one.example.com            --> Proxy hostname
-//    │   ├── certs.pem              --> TLS CA certs for the Teleport CA
-//    │   ├── foo                    --> RSA Private Key for user "foo"
-//    │   ├── foo-cert.pub           --> SSH certificate for proxies and nodes
-//    │   ├── foo.pub                --> Public Key
-//    │   ├── foo-x509.pem           --> TLS client certificate for Auth Server
-//    │   ├── foo-kube               --> Kubernetes certs for user "foo"
-//    │   |   ├── root               --> Kubernetes certs for teleport cluster "root"
-//    │   |   │   ├── kubeA-x509.pem --> TLS cert for Kubernetes cluster "kubeA"
-//    │   |   │   └── kubeB-x509.pem --> TLS cert for Kubernetes cluster "kubeB"
-//    │   |   └── leaf               --> Kubernetes certs for teleport cluster "leaf"
-//    │   |       └── kubeC-x509.pem --> TLS cert for Kubernetes cluster "kubeC"
-//    |   └── foo-db                 --> Database access certs for user "foo"
-//    |       ├── root               --> Database access certs for cluster "root"
-//    │       │   ├── dbA-x509.pem   --> TLS cert for database service "dbA"
-//    │       │   └── dbB-x509.pem   --> TLS cert for database service "dbB"
-//    │       └── leaf               --> Database access certs for cluster "leaf"
-//    │           └── dbC-x509.pem   --> TLS cert for database service "dbC"
-//    └── two.example.com
-//        ├── certs.pem
-//        ├── bar
-//        ├── bar-cert.pub
-//        ├── bar.pub
-//        └── bar-x509.pem
+//    ├── one.example.com            --> Proxy hostname
+//    │   ├── certs.pem              --> TLS CA certs for the Teleport CA
+//    │   ├── foo                    --> RSA Private Key for user "foo"
+//    │   ├── foo.pub                --> Public Key
+//    │   ├── foo-x509.pem           --> TLS client certificate for Auth Server
+//    │   ├── foo-ssh                --> SSH certs for user "foo"
+//    │   │   ├── root-cert.pub      --> SSH cert for Teleport cluster "root"
+//    │   │   └── leaf-cert.pub      --> SSH cert for Teleport cluster "leaf"
+//    │   ├── foo-kube               --> Kubernetes certs for user "foo"
+//    │   │   ├── root               --> Kubernetes certs for Teleport cluster "root"
+//    │   │   │   ├── kubeA-x509.pem --> TLS cert for Kubernetes cluster "kubeA"
+//    │   │   │   └── kubeB-x509.pem --> TLS cert for Kubernetes cluster "kubeB"
+//    │   │   └── leaf               --> Kubernetes certs for Teleport cluster "leaf"
+//    │   │       └── kubeC-x509.pem --> TLS cert for Kubernetes cluster "kubeC"
+//    │   └── foo-db                 --> Database access certs for user "foo"
+//    │       ├── root               --> Database access certs for cluster "root"
+//    │       │   ├── dbA-x509.pem   --> TLS cert for database service "dbA"
+//    │       │   └── dbB-x509.pem   --> TLS cert for database service "dbB"
+//    │       └── leaf               --> Database access certs for cluster "leaf"
+//    │           └── dbC-x509.pem   --> TLS cert for database service "dbC"
+//    └── two.example.com
+//        ├── certs.pem
+//        ├── bar
+//        ├── bar.pub
+//        ├── bar-x509.pem
+//        └── bar-ssh
+//            └── clusterA-cert.pub
 type FSLocalKeyStore struct {
 	// log holds the structured logger.
 	log *logrus.Entry
@@ -160,39 +160,40 @@ func NewFSLocalKeyStore(dirPath string) (s *FSLocalKeyStore, err error) {
 // AddKey adds a new key to the session store. If a key for the host is already
 // stored, overwrites it.
 func (fs *FSLocalKeyStore) AddKey(host, username string, key *Key) error {
+	if key.ClusterName == "" {
+		return trace.BadParameter("key must have ClusterName set to be added to the store")
+	}
 	dirPath, err := fs.dirFor(host, true)
 	if err != nil {
 		return trace.Wrap(err)
 	}
+
 	writeBytes := func(fname string, data []byte) error {
 		fp := filepath.Join(dirPath, fname)
+		if err := os.MkdirAll(filepath.Dir(fp), os.ModeDir|profileDirPerms); err != nil {
+			return trace.Wrap(err)
+		}
 		err := ioutil.WriteFile(fp, data, keyFilePerms)
 		if err != nil {
 			fs.log.Error(err)
 		}
 		return err
 	}
-	if err = writeBytes(username+fileExtCert, key.Cert); err != nil {
-		return trace.Wrap(err)
-	}
-	if err = writeBytes(username+fileExtTLSCert, key.TLSCert); err != nil {
+
+	if err = writeBytes(username, key.Priv); err != nil {
 		return trace.Wrap(err)
 	}
 	if err = writeBytes(username+fileExtPub, key.Pub); err != nil {
 		return trace.Wrap(err)
 	}
-	if err = writeBytes(username, key.Priv); err != nil {
+	if err = writeBytes(username+fileExtTLSCert, key.TLSCert); err != nil {
+		return trace.Wrap(err)
+	}
+
+	if err = writeBytes(filepath.Join(username+sshDirSuffix, key.ClusterName+fileExtSSHCert), key.Cert); err != nil {
 		return trace.Wrap(err)
 	}
 	// TODO(awly): unit test this.
-	kubeDir := filepath.Join(dirPath, username+kubeDirSuffix, key.ClusterName)
-	// Clean up any old kube certs.
-	if err := os.RemoveAll(kubeDir); err != nil {
-		return trace.Wrap(err)
-	}
-	if err := os.MkdirAll(kubeDir, os.ModeDir|profileDirPerms); err != nil {
-		return trace.Wrap(err)
-	}
 	for kubeCluster, cert := range key.KubeTLSCerts {
 		// Prevent directory traversal via a crafted kubernetes cluster name.
 		//
@@ -208,9 +209,6 @@ func (fs *FSLocalKeyStore) AddKey(host, username string, key *Key) error {
 	}
 	for db, cert := range key.DBTLSCerts {
 		fname := filepath.Join(username+dbDirSuffix, key.ClusterName, filepath.Clean(db)+fileExtTLSCert)
-		if err := os.MkdirAll(filepath.Join(dirPath, filepath.Dir(fname)), os.ModeDir|profileDirPerms); err != nil {
-			return trace.Wrap(err)
-		}
 		if err := writeBytes(fname, cert); err != nil {
 			return trace.Wrap(err)
 		}
@@ -218,43 +216,38 @@ func (fs *FSLocalKeyStore) AddKey(host, username string, key *Key) error {
 	return nil
 }
 
-// DeleteKey deletes a key from the local store
-func (fs *FSLocalKeyStore) DeleteKey(host, username string, opts ...KeyOption) error {
+// DeleteKey deletes the user's key with all its certs.
+func (fs *FSLocalKeyStore) DeleteKey(host, username string) error {
 	dirPath, err := fs.dirFor(host, false)
 	if err != nil {
 		return trace.Wrap(err)
 	}
 	files := []string{
-		filepath.Join(dirPath, username+fileExtCert),
-		filepath.Join(dirPath, username+fileExtTLSCert),
-		filepath.Join(dirPath, username+fileExtPub),
 		filepath.Join(dirPath, username),
+		filepath.Join(dirPath, username+fileExtPub),
+		filepath.Join(dirPath, username+fileExtTLSCert),
 	}
 	for _, fn := range files {
 		if err = os.Remove(fn); err != nil {
 			return trace.Wrap(err)
 		}
 	}
-	for _, o := range opts {
-		if err := o.deleteKey(dirPath, username); err != nil {
-			return trace.Wrap(err)
-		}
-	}
-	return nil
+
+	return fs.DeleteCerts(host, username, WithAllCerts()...)
 }
 
-// DeleteKeyOption deletes only secrets specified by the provided key options
-// keeping user's SSH/TLS certificates and private key intact.
+// DeleteCerts deletes only the specified certs of the user's key,
+// keeping the private key intact.
 //
 // Useful when needing to log out of a specific service, like a particular
 // database proxy.
-func (fs *FSLocalKeyStore) DeleteKeyOption(host, username string, opts ...KeyOption) error {
+func (fs *FSLocalKeyStore) DeleteCerts(host, username string, opts ...CertOption) error {
 	dirPath, err := fs.dirFor(host, false)
 	if err != nil {
 		return trace.Wrap(err)
 	}
 	for _, o := range opts {
-		if err := o.deleteKey(dirPath, username); err != nil {
+		if err := o.deleteFromKey(dirPath, username); err != nil {
 			return trace.Wrap(err)
 		}
 	}
@@ -273,9 +266,10 @@ func (fs *FSLocalKeyStore) DeleteKeys() error {
 	return nil
 }
 
-// GetKey returns a key for a given host. If the key is not found,
-// returns trace.NotFound error.
-func (fs *FSLocalKeyStore) GetKey(proxyHost, username string, opts ...KeyOption) (*Key, error) {
+// GetKey returns the user's key including the specified certs.
+// clusterName can be left empty if there are no cluster-dependent CertOptions.
+// If the key is not found, returns trace.NotFound error.
+func (fs *FSLocalKeyStore) GetKey(proxyHost, username, clusterName string, opts ...CertOption) (*Key, error) {
 	dirPath, err := fs.dirFor(proxyHost, false)
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -285,24 +279,18 @@ func (fs *FSLocalKeyStore) GetKey(proxyHost, username string, opts ...KeyOption)
 		return nil, trace.NotFound("no session keys for %v in %v", username, proxyHost)
 	}
 
-	certFile := filepath.Join(dirPath, username+fileExtCert)
-	cert, err := ioutil.ReadFile(certFile)
-	if err != nil {
-		fs.log.Error(err)
-		return nil, trace.Wrap(err)
-	}
-	tlsCertFile := filepath.Join(dirPath, username+fileExtTLSCert)
-	tlsCert, err := ioutil.ReadFile(tlsCertFile)
-	if err != nil {
-		fs.log.Error(err)
-		return nil, trace.Wrap(err)
-	}
 	pub, err := ioutil.ReadFile(filepath.Join(dirPath, username+fileExtPub))
 	if err != nil {
 		fs.log.Error(err)
 		return nil, trace.Wrap(err)
 	}
 	priv, err := ioutil.ReadFile(filepath.Join(dirPath, username))
+	if err != nil {
+		fs.log.Error(err)
+		return nil, trace.Wrap(err)
+	}
+	tlsCertFile := filepath.Join(dirPath, username+fileExtTLSCert)
+	tlsCert, err := ioutil.ReadFile(tlsCertFile)
 	if err != nil {
 		fs.log.Error(err)
 		return nil, trace.Wrap(err)
@@ -316,73 +304,90 @@ func (fs *FSLocalKeyStore) GetKey(proxyHost, username string, opts ...KeyOption)
 	key := &Key{
 		Pub:       pub,
 		Priv:      priv,
-		Cert:      cert,
-		ProxyHost: proxyHost,
 		TLSCert:   tlsCert,
+		ProxyHost: proxyHost,
 		TrustedCA: []auth.TrustedCerts{{
 			TLSCertificates: tlsCA,
 		}},
-		KubeTLSCerts: make(map[string][]byte),
-		DBTLSCerts:   make(map[string][]byte),
+		ClusterName: clusterName,
 	}
 
 	for _, o := range opts {
-		if err := o.getKey(dirPath, username, key); err != nil {
+		if err := o.addToKey(key, dirPath, username, fs.log); err != nil {
 			fs.log.Error(err)
 			return nil, trace.Wrap(err)
 		}
 	}
 
-	// Validate the key loaded from disk.
-	err = key.CheckCert()
-	if err != nil {
-		// KeyStore should return expired certificates as well
-		if !utils.IsCertExpiredError(err) {
-			return nil, trace.Wrap(err)
-		}
-	}
-	sshCertExpiration, err := key.CertValidBefore()
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
 	tlsCertExpiration, err := key.TeleportTLSCertValidBefore()
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
+	fs.log.Debugf("Returning Teleport TLS certificate %q valid until %q.",
+		tlsCertFile, tlsCertExpiration)
 
-	// Note, we may be returning expired certificates here, that is okay. If the
-	// certificates is expired, it's the responsibility of the TeleportClient to
+	// Note, we may be returning expired certificates here, that is okay. If a
+	// certificate is expired, it's the responsibility of the TeleportClient to
 	// perform cleanup of the certificates and the profile.
-	fs.log.Debugf("Returning SSH certificate %q valid until %q, TLS certificate %q valid until %q.",
-		certFile, sshCertExpiration, tlsCertFile, tlsCertExpiration)
 
 	return key, nil
 }
 
-// KeyOption is an additional step to run when loading (LocalKeyStore.GetKey)
+// CertOption is an additional step to run when loading (LocalKeyStore.GetKey)
 // or deleting (LocalKeyStore.DeleteKey) keys. These are the steps skipped by
 // default to reduce the amount of work that Get/DeleteKey performs by default.
-type KeyOption interface {
-	getKey(dirPath, username string, key *Key) error
-	deleteKey(dirPath, username string) error
+type CertOption interface {
+	addToKey(key *Key, dirPath, username string, log logrus.FieldLogger) error
+	deleteFromKey(dirPath, username string) error
 }
 
-// WithKubeCerts returns a GetKeyOption to load kubernetes certificates from
-// the store for a given teleport cluster.
-func WithKubeCerts(teleportClusterName string) KeyOption {
-	return withKubeCerts{teleportClusterName: teleportClusterName}
+// WithAllCerts lists all known CertOptions.
+func WithAllCerts() []CertOption {
+	return []CertOption{WithSSHCerts{}, WithKubeCerts{}, WithDBCerts{}}
 }
 
-type withKubeCerts struct {
-	teleportClusterName string
+// WithSSHCerts is a CertOption for handling SSH certificates.
+type WithSSHCerts struct{}
+
+func (o WithSSHCerts) addToKey(key *Key, dirPath, username string, log logrus.FieldLogger) error {
+	certFile := filepath.Join(dirPath, username+sshDirSuffix, key.ClusterName+fileExtSSHCert)
+	data, err := ioutil.ReadFile(certFile)
+	if err != nil {
+		return trace.ConvertSystemError(err)
+	}
+	key.Cert = data
+
+	// Validate the key loaded from disk.
+	if err = key.CheckCert(); err != nil {
+		// KeyStore should return expired certificates.
+		if !utils.IsCertExpiredError(err) {
+			return trace.Wrap(err)
+		}
+	}
+
+	// Report expiration date.
+	certExpiration, err := key.CertValidBefore()
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	log.Debugf("Returning SSH certificate %q valid until %q.", certFile, certExpiration)
+	return nil
 }
+
+func (o WithSSHCerts) deleteFromKey(dirPath, username string) error {
+	certsDir := filepath.Join(dirPath, username+sshDirSuffix)
+	return trace.ConvertSystemError(os.RemoveAll(certsDir))
+}
+
+// WithKubeCerts is a CertOption for handling kubernetes certificates.
+type WithKubeCerts struct{}
 
 // TODO(awly): unit test this.
-func (o withKubeCerts) getKey(dirPath, username string, key *Key) error {
-	kubeDir := filepath.Join(dirPath, username+kubeDirSuffix, o.teleportClusterName)
+func (o WithKubeCerts) addToKey(key *Key, dirPath, username string, log logrus.FieldLogger) error {
+	kubeDir := filepath.Join(dirPath, username+kubeDirSuffix, key.ClusterName)
 	kubeFiles, err := ioutil.ReadDir(kubeDir)
 	if err != nil && !os.IsNotExist(err) {
-		return trace.Wrap(err)
+		return trace.ConvertSystemError(err)
 	}
 	if key.KubeTLSCerts == nil {
 		key.KubeTLSCerts = make(map[string][]byte)
@@ -390,37 +395,26 @@ func (o withKubeCerts) getKey(dirPath, username string, key *Key) error {
 	for _, fi := range kubeFiles {
 		data, err := ioutil.ReadFile(filepath.Join(kubeDir, fi.Name()))
 		if err != nil {
-			return trace.Wrap(err)
+			return trace.ConvertSystemError(err)
 		}
 		kubeCluster := strings.TrimSuffix(filepath.Base(fi.Name()), fileExtTLSCert)
 		key.KubeTLSCerts[kubeCluster] = data
 	}
-	if key.ClusterName == "" {
-		key.ClusterName = o.teleportClusterName
-	}
 	return nil
 }
 
-func (o withKubeCerts) deleteKey(dirPath, username string) error {
-	kubeCertsDir := filepath.Join(dirPath, username+kubeDirSuffix, o.teleportClusterName)
-	if err := os.RemoveAll(kubeCertsDir); err != nil {
-		return trace.Wrap(err)
-	}
-	return nil
+func (o WithKubeCerts) deleteFromKey(dirPath, username string) error {
+	kubeCertsDir := filepath.Join(dirPath, username+kubeDirSuffix)
+	return trace.ConvertSystemError(os.RemoveAll(kubeCertsDir))
 }
 
-// WithDBCerts returns a GetKeyOption to load database access certificates
-// from the store for a given Teleport cluster.
-func WithDBCerts(teleportClusterName, dbName string) KeyOption {
-	return withDBCerts{teleportClusterName: teleportClusterName, dbName: dbName}
-}
-
-type withDBCerts struct {
+// WithDBCerts is a CertOption for handling database access certificates.
+type WithDBCerts struct {
 	teleportClusterName, dbName string
 }
 
-func (o withDBCerts) getKey(dirPath, username string, key *Key) error {
-	dbDir := filepath.Join(dirPath, username+dbDirSuffix, o.teleportClusterName)
+func (o WithDBCerts) addToKey(key *Key, dirPath, username string, log logrus.FieldLogger) error {
+	dbDir := filepath.Join(dirPath, username+dbDirSuffix, key.ClusterName)
 	dbFiles, err := ioutil.ReadDir(dbDir)
 	if err != nil && !os.IsNotExist(err) {
 		return trace.Wrap(err)
@@ -436,19 +430,22 @@ func (o withDBCerts) getKey(dirPath, username string, key *Key) error {
 		dbName := strings.TrimSuffix(filepath.Base(fi.Name()), fileExtTLSCert)
 		key.DBTLSCerts[dbName] = data
 	}
-	if key.ClusterName == "" {
-		key.ClusterName = o.teleportClusterName
-	}
 	return nil
 }
 
-func (o withDBCerts) deleteKey(dirPath, username string) error {
-	// If database name is specified, remove only that cert, otherwise remove
-	// certs for all databases a user is logged into.
-	if o.dbName != "" {
-		return os.Remove(filepath.Join(dirPath, username+dbDirSuffix, o.teleportClusterName, o.dbName+fileExtTLSCert))
+func (o WithDBCerts) deleteFromKey(dirPath, username string) error {
+	// If database name is specified, remove only that cert.
+	// If only Teleport cluster is specified, remove all DB certs within that cluster.
+	// Otherwise remove certs for all databases the user is logged into.
+	dbPath := filepath.Join(dirPath, username+dbDirSuffix)
+	if o.teleportClusterName != "" {
+		dbPath = filepath.Join(dbPath, o.teleportClusterName)
+		if o.dbName != "" {
+			err := os.Remove(filepath.Join(dbPath, o.dbName+fileExtTLSCert))
+			return trace.ConvertSystemError(err)
+		}
 	}
-	return os.RemoveAll(filepath.Join(dirPath, username+dbDirSuffix, o.teleportClusterName))
+	return trace.ConvertSystemError(os.RemoveAll(dbPath))
 }
 
 // SaveCerts saves trusted TLS certificates of certificate authorities
@@ -503,30 +500,6 @@ func (fs *FSLocalKeyStore) GetCertsPEM(proxy string) ([][]byte, error) {
 		data = rest
 	}
 	return blocks, nil
-}
-
-// GetCerts returns trusted TLS certificates of certificate authorities as
-// x509.CertPool.
-func (fs *FSLocalKeyStore) GetCerts(proxy string) (*x509.CertPool, error) {
-	blocks, err := fs.GetCertsPEM(proxy)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	pool := x509.NewCertPool()
-	for _, bytes := range blocks {
-		block, _ := pem.Decode(bytes)
-		if block == nil {
-			continue
-		}
-
-		cert, err := x509.ParseCertificate(block.Bytes)
-		if err != nil {
-			return nil, trace.BadParameter("failed to parse certificate: %v", err)
-		}
-		fs.log.Debugf("Adding trusted cluster certificate authority %q to trusted pool.", cert.Issuer)
-		pool.AddCert(cert)
-	}
-	return pool, nil
 }
 
 // AddKnownHostKeys adds a new entry to 'known_hosts' file
@@ -666,13 +639,13 @@ var errNoLocalKeyStore = trace.NotFound("there is no local keystore")
 func (noLocalKeyStore) AddKey(proxy string, username string, key *Key) error {
 	return errNoLocalKeyStore
 }
-func (noLocalKeyStore) GetKey(proxy, username string, opts ...KeyOption) (*Key, error) {
+func (noLocalKeyStore) GetKey(proxy, username, clusterName string, opts ...CertOption) (*Key, error) {
 	return nil, errNoLocalKeyStore
 }
-func (noLocalKeyStore) DeleteKey(proxyHost, username string, opts ...KeyOption) error {
+func (noLocalKeyStore) DeleteKey(proxyHost, username string) error {
 	return errNoLocalKeyStore
 }
-func (noLocalKeyStore) DeleteKeyOption(proxyHost, username string, opts ...KeyOption) error {
+func (noLocalKeyStore) DeleteCerts(proxyHost, username string, opts ...CertOption) error {
 	return errNoLocalKeyStore
 }
 func (noLocalKeyStore) DeleteKeys() error { return errNoLocalKeyStore }
@@ -685,5 +658,4 @@ func (noLocalKeyStore) GetKnownHostKeys(hostname string) ([]ssh.PublicKey, error
 func (noLocalKeyStore) SaveCerts(proxy string, cas []auth.TrustedCerts) error {
 	return errNoLocalKeyStore
 }
-func (noLocalKeyStore) GetCerts(proxy string) (*x509.CertPool, error) { return nil, errNoLocalKeyStore }
-func (noLocalKeyStore) GetCertsPEM(proxy string) ([][]byte, error)    { return nil, errNoLocalKeyStore }
+func (noLocalKeyStore) GetCertsPEM(proxy string) ([][]byte, error) { return nil, errNoLocalKeyStore }

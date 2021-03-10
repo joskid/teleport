@@ -485,10 +485,11 @@ func GenerateUserCreds(req UserCredsRequest) (*UserCreds, error) {
 	return &UserCreds{
 		HostCA: ca,
 		Key: client.Key{
-			Priv:    priv,
-			Pub:     pub,
-			Cert:    sshCert,
-			TLSCert: x509Cert,
+			Priv:        priv,
+			Pub:         pub,
+			Cert:        sshCert,
+			TLSCert:     x509Cert,
+			ClusterName: clusterName.GetClusterName(),
 		},
 	}, nil
 }
@@ -657,8 +658,9 @@ func (i *TeleInstance) CreateEx(trustedSecrets []*InstanceSecrets, tconf *servic
 		if user.Key == nil || len(user.Key.Pub) == 0 {
 			priv, pub, _ := tconf.Keygen.GenerateKeyPair("")
 			user.Key = &client.Key{
-				Priv: priv,
-				Pub:  pub,
+				Priv:        priv,
+				Pub:         pub,
+				ClusterName: i.Secrets.SiteName,
 			}
 		}
 		// sign user's keys:

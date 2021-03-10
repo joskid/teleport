@@ -117,21 +117,20 @@ func (k *Key) TeleportClientTLSConfig(cipherSuites []uint16) (*tls.Config, error
 }
 
 func (k *Key) clientTLSConfig(cipherSuites []uint16, tlsCertRaw []byte) (*tls.Config, error) {
-	tlsConfig := utils.TLSConfig(cipherSuites)
-
-	pool := x509.NewCertPool()
-	for _, ca := range k.TrustedCA {
-		for _, certPEM := range ca.TLSCertificates {
-			if !pool.AppendCertsFromPEM(certPEM) {
-				return nil, trace.BadParameter("failed to parse certificate received from the proxy")
-			}
-		}
-	}
-	tlsConfig.RootCAs = pool
 	tlsCert, err := tls.X509KeyPair(tlsCertRaw, k.Priv)
 	if err != nil {
-		return nil, trace.Wrap(err, "failed to parse TLS cert and key")
+		return nil, trace.Wrap(err)
 	}
+
+	pool := x509.NewCertPool()
+	for _, caPEM := range k.TLSCAs() {
+		if !pool.AppendCertsFromPEM(caPEM) {
+			return nil, trace.BadParameter("failed to parse TLS CA certificate")
+		}
+	}
+
+	tlsConfig := utils.TLSConfig(cipherSuites)
+	tlsConfig.RootCAs = pool
 	tlsConfig.Certificates = append(tlsConfig.Certificates, tlsCert)
 	// Use Issuer CN from the certificate to populate the correct SNI in
 	// requests.
@@ -293,7 +292,7 @@ func (k *Key) DBTLSCertificates() (certs []x509.Certificate, err error) {
 
 // TeleportTLSCertValidBefore returns the time of the TLS cert expiration
 func (k *Key) TeleportTLSCertValidBefore() (t time.Time, err error) {
-	cert, err := tlsca.ParseCertificatePEM(k.TLSCert)
+	cert, err := k.TeleportTLSCertificate()
 	if err != nil {
 		return t, trace.Wrap(err)
 	}
@@ -406,4 +405,18 @@ func ProxyClientSSHConfig(k *Key, keyStore LocalKeyStore) (*ssh.ClientConfig, er
 	sshConfig.User = principals[0]
 	sshConfig.HostKeyCallback = NewKeyStoreCertChecker(keyStore)
 	return sshConfig, nil
+}
+
+// RootClusterName extracts the root cluster name from the issuer
+// of the Teleport TLS certificate.
+func (k *Key) RootClusterName() (string, error) {
+	cert, err := k.TeleportTLSCertificate()
+	if err != nil {
+		return "", trace.Wrap(err)
+	}
+	clusterName := cert.Issuer.CommonName
+	if clusterName == "" {
+		return "", trace.BadParameter("failed to extract root cluster name from Teleport TLS cert")
+	}
+	return clusterName, nil
 }

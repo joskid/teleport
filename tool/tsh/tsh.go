@@ -245,7 +245,7 @@ const (
 	userEnvVar             = "TELEPORT_USER"
 	useLocalSSHAgentEnvVar = "TELEPORT_USE_LOCAL_SSH_AGENT"
 
-	clusterHelp = "Specify the cluster to connect"
+	clusterHelp = "Specify the Teleport cluster to connect"
 	browserHelp = "Set to 'none' to suppress browser opening on login"
 )
 
@@ -559,12 +559,6 @@ func exportFile(path string, format string) error {
 
 // onLogin logs in with remote proxy and gets signed certificates
 func onLogin(cf *CLIConf) error {
-	var (
-		err error
-		tc  *client.TeleportClient
-		key *client.Key
-	)
-
 	if cf.IdentityFileIn != "" {
 		return trace.BadParameter("-i flag cannot be used here")
 	}
@@ -585,7 +579,7 @@ func onLogin(cf *CLIConf) error {
 	}
 
 	// make the teleport client and retrieve the certificate from the proxy:
-	tc, err = makeClient(cf, true)
+	tc, err := makeClient(cf, true)
 	if err != nil {
 		return trace.Wrap(err)
 	}
@@ -613,14 +607,8 @@ func onLogin(cf *CLIConf) error {
 		// but cluster is specified, treat this as selecting a new cluster
 		// for the same proxy
 		case (cf.Proxy == "" || host(cf.Proxy) == host(profile.ProxyURL.Host)) && cf.SiteName != "":
-			// trigger reissue, preserving any active requests.
-			err = tc.ReissueUserCerts(cf.Context, client.ReissueParams{
-				AccessRequests: profile.ActiveRequests.AccessRequests,
-				RouteToCluster: cf.SiteName,
-			})
-			if err != nil {
-				return trace.Wrap(err)
-			}
+			// The cf.SiteName certs have already been obtained by makeClient.
+			// It now suffices to save the new cluster selection in the profile.
 			if err := tc.SaveProfile("", true); err != nil {
 				return trace.Wrap(err)
 			}
@@ -632,7 +620,7 @@ func onLogin(cf *CLIConf) error {
 		// but desired roles are specified, treat this as a privilege escalation
 		// request for the same login session.
 		case (cf.Proxy == "" || host(cf.Proxy) == host(profile.ProxyURL.Host)) && cf.DesiredRoles != "" && cf.IdentityFileOut == "":
-			if err := executeAccessRequest(cf); err != nil {
+			if err := executeAccessRequest(cf, tc); err != nil {
 				return trace.Wrap(err)
 			}
 			if err := kubeconfig.UpdateWithClient(cf.Context, "", tc, cf.executablePath); err != nil {
@@ -651,7 +639,7 @@ func onLogin(cf *CLIConf) error {
 	// -i flag specified? save the retreived cert into an identity file
 	makeIdentityFile := (cf.IdentityFileOut != "")
 
-	key, err = tc.Login(cf.Context)
+	key, err := tc.Login(cf.Context)
 	if err != nil {
 		return trace.Wrap(err)
 	}
@@ -690,7 +678,9 @@ func onLogin(cf *CLIConf) error {
 		return nil
 	}
 
-	tc.ActivateKey(cf.Context, key)
+	if err := tc.ActivateKey(cf.Context, key); err != nil {
+		return trace.Wrap(err)
+	}
 
 	// If the proxy is advertising that it supports Kubernetes, update kubeconfig.
 	if tc.KubeProxyAddr != "" {
@@ -709,8 +699,8 @@ func onLogin(cf *CLIConf) error {
 		var prompt string
 		roleNames, err := key.CertRoles()
 		if err != nil {
-			tc.Logout()
-			return trace.Wrap(err)
+			logoutErr := tc.Logout()
+			return trace.NewAggregate(err, logoutErr)
 		}
 		// load all roles from root cluster and collect relevant options.
 		// the normal one-off TeleportClient methods don't re-use the auth server
@@ -730,16 +720,17 @@ func onLogin(cf *CLIConf) error {
 			return nil
 		})
 		if err != nil {
-			tc.Logout()
-			return trace.Wrap(err)
+			logoutErr := tc.Logout()
+			return trace.NewAggregate(err, logoutErr)
 		}
 		if reason && cf.RequestReason == "" {
-			tc.Logout()
-			msg := "--requst-reason must be specified"
+			msg := "--request-reason must be specified"
 			if prompt != "" {
 				msg = msg + ", prompt=" + prompt
 			}
-			return trace.BadParameter(msg)
+			err := trace.BadParameter(msg)
+			logoutErr := tc.Logout()
+			return trace.NewAggregate(err, logoutErr)
 		}
 		if auto {
 			cf.DesiredRoles = "*"
@@ -748,9 +739,9 @@ func onLogin(cf *CLIConf) error {
 
 	if cf.DesiredRoles != "" {
 		fmt.Println("") // visually separate access request output
-		if err := executeAccessRequest(cf); err != nil {
-			tc.Logout()
-			return trace.Wrap(err)
+		if err := executeAccessRequest(cf, tc); err != nil {
+			logoutErr := tc.Logout()
+			return trace.NewAggregate(err, logoutErr)
 		}
 	}
 
@@ -992,15 +983,11 @@ func onListNodes(cf *CLIConf) error {
 	return nil
 }
 
-func executeAccessRequest(cf *CLIConf) error {
+func executeAccessRequest(cf *CLIConf, tc *client.TeleportClient) error {
 	if cf.DesiredRoles == "" {
 		return trace.BadParameter("one or more roles must be specified")
 	}
 	roles := strings.Split(cf.DesiredRoles, ",")
-	tc, err := makeClient(cf, true)
-	if err != nil {
-		return trace.Wrap(err)
-	}
 	if cf.Username == "" {
 		cf.Username = tc.Username
 	}
@@ -1649,6 +1636,10 @@ func makeClient(cf *CLIConf, useProfileLogin bool) (*client.TeleportClient, erro
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
+	if err := loadKeyForClient(cf.Context, cf.Proxy, tc); err != nil {
+		return nil, trace.Wrap(err)
+	}
+
 	// If identity file was provided, we skip loading the local profile info
 	// (above). This profile info provides the proxy-advertised listening
 	// addresses.
@@ -1660,7 +1651,45 @@ func makeClient(cf *CLIConf, useProfileLogin bool) (*client.TeleportClient, erro
 			return nil, trace.Wrap(err)
 		}
 	}
+
 	return tc, nil
+}
+
+// loadKeyForClient loads the key for the client's target cluster, requesting
+// reissue if the key is not found in its local store.
+func loadKeyForClient(ctx context.Context, proxyHost string, tc *client.TeleportClient) error {
+	profile, err := client.StatusCurrent("", proxyHost)
+	if err != nil {
+		if trace.IsNotFound(err) {
+			return nil
+		}
+		return trace.Wrap(err)
+	}
+	if err := tc.LoadKeyForCluster(tc.SiteName); err == nil {
+		// The tc.SiteName key was found in the local store and is now loaded
+		// in the SSH agent.
+		return nil
+	}
+
+	// Load the profile.Cluster key for authentication during the reissue
+	// request.
+	if err := tc.LoadKeyForCluster(profile.Cluster); err != nil {
+		return trace.Wrap(err)
+	}
+	if tc.SiteName == "" || tc.SiteName == profile.Cluster {
+		return nil
+	}
+
+	// Request a new key targeting tc.SiteName using the loaded key for
+	// profile.Cluster. This also automatically loads the new key.
+	err = tc.ReissueUserCerts(ctx, client.ReissueParams{
+		AccessRequests: profile.ActiveRequests.AccessRequests,
+		RouteToCluster: tc.SiteName,
+	})
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	return nil
 }
 
 func parseCertificateCompatibilityFlag(compatibility string, certificateFormat string) (string, error) {
@@ -1888,7 +1917,7 @@ Loop:
 // reissueWithRequests handles a certificate reissue, applying new requests by ID,
 // and saving the updated profile.
 func reissueWithRequests(cf *CLIConf, tc *client.TeleportClient, reqIDs ...string) error {
-	profile, _, err := client.Status("", cf.Proxy)
+	profile, err := client.StatusCurrent("", cf.Proxy)
 	if err != nil {
 		return trace.Wrap(err)
 	}

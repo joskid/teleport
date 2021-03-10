@@ -68,13 +68,13 @@ func TestListKeys(t *testing.T) {
 	// read all bob keys:
 	for i := 0; i < keyNum; i++ {
 		host := fmt.Sprintf("host-%v", i)
-		keys2, err := s.store.GetKey(host, "bob", WithDBCerts(samKey.ClusterName, ""))
+		keys2, err := s.store.GetKey(host, "bob", samKey.ClusterName, WithSSHCerts{}, WithDBCerts{})
 		require.NoError(t, err)
 		require.Empty(t, cmp.Diff(*keys2, keys[i], cmpopts.EquateEmpty()))
 	}
 
 	// read sam's key and make sure it's the same:
-	skey, err := s.store.GetKey("sam.host", "sam")
+	skey, err := s.store.GetKey("sam.host", "sam", samKey.ClusterName, WithSSHCerts{})
 	require.NoError(t, err)
 	require.Equal(t, samKey.Cert, skey.Cert)
 	require.Equal(t, samKey.Pub, skey.Pub)
@@ -91,15 +91,16 @@ func TestKeyCRUD(t *testing.T) {
 	require.NoError(t, err)
 
 	// load back and compare:
-	keyCopy, err := s.store.GetKey("host.a", "bob", WithDBCerts(key.ClusterName, ""))
+	keyCopy, err := s.store.GetKey("host.a", "bob", key.ClusterName, WithSSHCerts{}, WithDBCerts{})
 	require.NoError(t, err)
 	key.ProxyHost = keyCopy.ProxyHost
 	require.Empty(t, cmp.Diff(key, keyCopy, cmpopts.EquateEmpty()))
+	require.Len(t, key.DBTLSCerts, 1)
 
 	// Delete just the db cert, reload & verify it's gone
-	err = s.store.DeleteKeyOption("host.a", "bob", WithDBCerts(key.ClusterName, ""))
+	err = s.store.DeleteCerts("host.a", "bob", WithDBCerts{teleportClusterName: key.ClusterName})
 	require.NoError(t, err)
-	keyCopy, err = s.store.GetKey("host.a", "bob", WithDBCerts(key.ClusterName, ""))
+	keyCopy, err = s.store.GetKey("host.a", "bob", key.ClusterName, WithSSHCerts{}, WithDBCerts{})
 	require.NoError(t, err)
 	key.DBTLSCerts = nil
 	require.Empty(t, cmp.Diff(key, keyCopy, cmpopts.EquateEmpty()))
@@ -107,7 +108,7 @@ func TestKeyCRUD(t *testing.T) {
 	// Delete & verify that it's gone
 	err = s.store.DeleteKey("host.a", "bob")
 	require.NoError(t, err)
-	_, err = s.store.GetKey("host.a", "bob")
+	_, err = s.store.GetKey("host.a", "bob", key.ClusterName)
 	require.Error(t, err)
 	require.True(t, trace.IsNotFound(err))
 
@@ -130,9 +131,9 @@ func TestDeleteAll(t *testing.T) {
 	require.NoError(t, err)
 
 	// check keys exist
-	_, err = s.store.GetKey("proxy.example.com", "foo")
+	_, err = s.store.GetKey("proxy.example.com", "foo", key.ClusterName)
 	require.NoError(t, err)
-	_, err = s.store.GetKey("proxy.example.com", "bar")
+	_, err = s.store.GetKey("proxy.example.com", "bar", key.ClusterName)
 	require.NoError(t, err)
 
 	// delete all keys
@@ -140,9 +141,9 @@ func TestDeleteAll(t *testing.T) {
 	require.NoError(t, err)
 
 	// verify keys are gone
-	_, err = s.store.GetKey("proxy.example.com", "foo")
+	_, err = s.store.GetKey("proxy.example.com", "foo", key.ClusterName)
 	require.True(t, trace.IsNotFound(err))
-	_, err = s.store.GetKey("proxy.example.com", "bar")
+	_, err = s.store.GetKey("proxy.example.com", "bar", key.ClusterName)
 	require.Error(t, err)
 }
 
@@ -203,7 +204,7 @@ func TestCheckKey(t *testing.T) {
 	err = s.addKey("host.a", "bob", key)
 	require.NoError(t, err)
 
-	_, err = s.store.GetKey("host.a", "bob")
+	_, err = s.store.GetKey("host.a", "bob", key.ClusterName)
 	require.NoError(t, err)
 }
 
@@ -303,7 +304,7 @@ func TestCheckKeyFIPS(t *testing.T) {
 	require.NoError(t, err)
 
 	// Should return trace.BadParameter error because only RSA keys are supported.
-	_, err = s.store.GetKey("host.a", "bob")
+	_, err = s.store.GetKey("host.a", "bob", key.ClusterName)
 	require.True(t, trace.IsBadParameter(err))
 }
 
