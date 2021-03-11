@@ -83,6 +83,8 @@ type AccessRequest interface {
 	// ApplyReview applies an access review.  The supplied parser must be pre-configured to evaluate
 	// boolean expressions based on the review and its author.
 	ApplyReview(AccessReview, predicate.Parser) error
+	// GetThresholds gets the review thresholds.
+	GetThresholds() []AccessReviewThreshold
 	// GetReviews gets the list of currently applied access reviews.
 	GetReviews() []AccessReview
 	// GetSuggestedReviewers gets the suggested reviewer list.
@@ -236,6 +238,11 @@ func (r *AccessRequestV3) getThreshold(tid uint32) (AccessReviewThreshold, error
 // SetThresholds sets the review thresholds.
 func (r *AccessRequestV3) SetThresholds(thresholds []AccessReviewThreshold) {
 	r.Spec.Thresholds = thresholds
+}
+
+// GetThresholds gets the review thresholds.
+func (r *AccessRequestV3) GetThresholds() []AccessReviewThreshold {
+	return r.Spec.Thresholds
 }
 
 // SetRoleThresholdMapping sets the rtm (internal use only).
