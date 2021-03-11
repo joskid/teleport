@@ -21,6 +21,16 @@ To build Teleport with DynamoDB enabled, run:
 ADDFLAGS='-tags dynamodb' make build/teleport
 ```
 
+### Running tests
+
+The DynamodDB tests are not run by default. To run them locally, try:
+
+```
+go test -tags dynamodb -v  ./lib/backend/dynamo
+```
+
+*NOTE:* you will need to provide AWS credentials (e.g. in `~/.aws/credentials`, or via environment vars) for the tests to work.
+
 ### Quick Start
 
 Add this storage configuration in `teleport` section of the config file (by default it's `/etc/teleport.yaml`):
