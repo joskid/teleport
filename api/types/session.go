@@ -67,14 +67,12 @@ type WebSession interface {
 	SetUser(string)
 	// GetPub is returns public certificate signed by auth server
 	GetPub() []byte
-	SetPub([]byte)
 	// GetPriv returns private OpenSSH key used to auth with SSH nodes
 	GetPriv() []byte
 	// SetPriv sets private key
 	SetPriv([]byte)
 	// GetTLSCert returns PEM encoded TLS certificate associated with session
 	GetTLSCert() []byte
-	SetTLSCert([]byte)
 	// BearerToken is a special bearer token used for additional
 	// bearer authentication
 	GetBearerToken() string
@@ -218,17 +216,9 @@ func (ws *WebSessionV2) GetTLSCert() []byte {
 	return ws.Spec.TLSCert
 }
 
-func (ws *WebSessionV2) SetTLSCert(cert []byte) {
-	ws.Spec.TLSCert = cert
-}
-
 // GetPub is returns public certificate signed by auth server
 func (ws *WebSessionV2) GetPub() []byte {
 	return ws.Spec.Pub
-}
-
-func (ws *WebSessionV2) SetPub(pub []byte) {
-	ws.Spec.Pub = pub
 }
 
 // GetPriv returns private OpenSSH key used to auth with SSH nodes
@@ -282,23 +272,16 @@ func (r *GetAppSessionRequest) Check() error {
 type CreateAppSessionRequest struct {
 	// Username is the identity of the user requesting the session.
 	Username string `json:"username"`
-	// ParentSession is the session ID of the parent session.
-	ParentSession string `json:"parent_session"`
 	// PublicAddr is the public address of the application.
 	PublicAddr string `json:"public_addr"`
 	// ClusterName is the name of the cluster within which the application is running.
 	ClusterName string `json:"cluster_name"`
-	//
-	SessionID string `json:"session_id"`
 }
 
 // Check validates the request.
 func (r CreateAppSessionRequest) Check() error {
 	if r.Username == "" {
 		return trace.BadParameter("username missing")
-	}
-	if r.ParentSession == "" {
-		return trace.BadParameter("parent session missing")
 	}
 	if r.PublicAddr == "" {
 		return trace.BadParameter("public address missing")

@@ -102,16 +102,16 @@ func (h *Handler) createAppSession(w http.ResponseWriter, r *http.Request, p htt
 
 	// Create an application web session.
 	//
-	// ParentSession is used to derive the TTL for the application session.
-	// Application sessions should not last longer than the parent session.
+	// Application sessions should not last longer than the parent session.TTL
+	// will be derived from the identity which has the same expiration as the
+	// parent web session.
 	//
 	// PublicAddr and ClusterName will get encoded within the certificate and
 	// used for request routing.
 	ws, err := authClient.CreateAppSession(r.Context(), services.CreateAppSessionRequest{
-		Username:      ctx.GetUser(),
-		ParentSession: ctx.GetSessionID(),
-		PublicAddr:    result.PublicAddr,
-		ClusterName:   result.ClusterName,
+		Username:    ctx.GetUser(),
+		PublicAddr:  result.PublicAddr,
+		ClusterName: result.ClusterName,
 	})
 	if err != nil {
 		return nil, trace.Wrap(err)

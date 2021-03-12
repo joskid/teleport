@@ -177,7 +177,7 @@ func (h *Handler) extractSessionID(r *http.Request) (sessionID string, err error
 	// We have a client certificate with encoded session id in application
 	// access CLI flow i.e. when users log in using "tsh app login" and
 	// then connect to the apps with the issued certs.
-	if len(r.TLS.PeerCertificates) > 0 {
+	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
 		certificate := r.TLS.PeerCertificates[0]
 		identity, err := tlsca.FromSubject(certificate.Subject, certificate.NotAfter)
 		if err != nil {
@@ -244,6 +244,11 @@ func HasFragment(r *http.Request) bool {
 func HasSession(r *http.Request) bool {
 	_, err := r.Cookie(CookieName)
 	return err == nil
+}
+
+// HasClientCert checks if the request has a client certificate.
+func HasClientCert(r *http.Request) bool {
+	return r.TLS != nil && len(r.TLS.PeerCertificates) > 0
 }
 
 // HasName checks if the client is attempting to connect to a

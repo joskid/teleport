@@ -18,7 +18,6 @@ package auth
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/gravitational/teleport"
@@ -31,10 +30,9 @@ import (
 	"github.com/gravitational/teleport/lib/services/local"
 	"github.com/gravitational/teleport/lib/tlsca"
 	"github.com/gravitational/teleport/lib/utils"
-	"github.com/jonboulle/clockwork"
 
 	"github.com/gravitational/trace"
-
+	"github.com/jonboulle/clockwork"
 	"github.com/pborman/uuid"
 )
 
@@ -48,35 +46,14 @@ func (s *Server) CreateAppSession(ctx context.Context, req services.CreateAppSes
 			"this Teleport cluster doesn't support application access, please contact the cluster administrator")
 	}
 
-	// // Check that a matching parent web session exists in the backend.
-	// parentSession, err := s.GetWebSession(ctx, types.GetWebSessionRequest{
-	// 	User:      req.Username,
-	// 	SessionID: req.ParentSession,
-	// })
-	// if err != nil {
-	// 	return nil, trace.Wrap(err)
-	// }
-
-	// // Don't let the TTL of the child certificate go longer than the parent.
-	// ttl := checker.AdjustSessionTTL(parentSession.GetExpiryTime().Sub(s.clock.Now()))
-
-	fmt.Printf("=== DEBUG === %#v\n", req)
-
-	// Don't let the app session go longer than the identity expiration.
+	// Don't let the app session go longer than the identity expiration,
+	// which matches the parent web session TTL as well.
 	ttl := checker.AdjustSessionTTL(identity.Expires.Sub(s.clock.Now()))
 
 	// Create certificate for this session.
 	privateKey, publicKey, err := s.GetNewKeyPairFromPool()
 	if err != nil {
 		return nil, trace.Wrap(err)
-	}
-
-	sessionID := req.SessionID
-	if sessionID == "" {
-		sessionID, err = utils.CryptoRandomHex(SessionTokenBytes)
-		if err != nil {
-			return nil, trace.Wrap(err)
-		}
 	}
 
 	certs, err := s.generateUserCert(certRequest{
@@ -93,7 +70,7 @@ func (s *Server) CreateAppSession(ctx context.Context, req services.CreateAppSes
 		// Only allow this certificate to be used for applications.
 		usage: []string{teleport.UsageAppsOnly},
 		// Add in the application routing information.
-		appSessionID:   sessionID,
+		appSessionID:   uuid.New(),
 		appPublicAddr:  req.PublicAddr,
 		appClusterName: req.ClusterName,
 	})
@@ -102,13 +79,10 @@ func (s *Server) CreateAppSession(ctx context.Context, req services.CreateAppSes
 	}
 
 	// // Create services.WebSession for this session.
-	// sessionID := req.SessionID
-	// if sessionID == "" {
-	// 	sessionID, err = utils.CryptoRandomHex(SessionTokenBytes)
-	// 	if err != nil {
-	// 		return nil, trace.Wrap(err)
-	// 	}
-	// }
+	sessionID, err := utils.CryptoRandomHex(SessionTokenBytes)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
 	session := services.NewWebSession(sessionID, services.KindWebSession, services.KindAppSession, services.WebSessionSpecV2{
 		User:    req.Username,
 		Priv:    privateKey,
@@ -122,50 +96,6 @@ func (s *Server) CreateAppSession(ctx context.Context, req services.CreateAppSes
 	log.Debugf("Generated application web session for %v with TTL %v.", req.Username, ttl)
 
 	return session, nil
-}
-
-// UpsertAppSession saves the provided app session for the specified user.
-func (s *Server) UpsertAppSession(ctx context.Context, session types.WebSession, user services.User, identity tlsca.Identity, checker services.AccessChecker) error {
-	// Don't let the app session go longer than the identity expiration.
-	ttl := checker.AdjustSessionTTL(identity.Expires.Sub(s.clock.Now()))
-	session.SetExpiryTime(s.clock.Now().Add(ttl))
-
-	privateKey, publicKey, err := s.GetNewKeyPairFromPool()
-	if err != nil {
-		return trace.Wrap(err)
-	}
-
-	certs, err := s.generateUserCert(certRequest{
-		user:      user,
-		publicKey: publicKey,
-		checker:   checker,
-		ttl:       ttl,
-		// Set the login to be a random string. Application certificates are never
-		// used to log into servers but SSH certificate generation code requires a
-		// principal be in the certificate.
-		traits: wrappers.Traits(map[string][]string{
-			teleport.TraitLogins: {uuid.New()},
-		}),
-		// Only allow this certificate to be used for applications.
-		usage: []string{teleport.UsageAppsOnly},
-		// Add in the application routing information.
-		appSessionID: session.GetName(),
-		//appPublicAddr:  req.PublicAddr,
-		//appClusterName: req.ClusterName,
-	})
-	if err != nil {
-		return trace.Wrap(err)
-	}
-
-	session.SetPriv(privateKey)
-	session.SetPub(certs.ssh)
-	session.SetTLSCert(certs.tls)
-
-	log.Debugf("=== DEBUG === Generated application web session for %v with TTL %v.", user, ttl)
-	if err := s.Identity.UpsertAppSession(ctx, session); err != nil {
-		return trace.Wrap(err)
-	}
-	return nil
 }
 
 // WaitForAppSession will block until the requested application session shows up in the

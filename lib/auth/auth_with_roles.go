@@ -2488,15 +2488,9 @@ func (a *ServerWithRoles) CreateAppSession(ctx context.Context, req services.Cre
 	return session, nil
 }
 
-// UpsertAppSession saves the provided application web session.
-func (a *ServerWithRoles) UpsertAppSession(ctx context.Context, session types.WebSession) error {
-	if err := a.currentUserAction(session.GetUser()); err != nil {
-		return trace.Wrap(err)
-	}
-	if err := a.authServer.UpsertAppSession(ctx, session, a.context.User, a.context.Identity.GetIdentity(), a.context.Checker); err != nil {
-		return trace.Wrap(err)
-	}
-	return nil
+// UpsertAppSession not implemented: can only be called locally.
+func (a *ServerWithRoles) UpsertAppSession(ctx context.Context, session services.WebSession) error {
+	return trace.NotImplemented(notImplementedMessage)
 }
 
 // DeleteAppSession removes an application web session.

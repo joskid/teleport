@@ -934,11 +934,9 @@ func (g *GRPCServer) CreateAppSession(ctx context.Context, req *proto.CreateAppS
 	}
 
 	session, err := auth.CreateAppSession(ctx, services.CreateAppSessionRequest{
-		Username:      req.GetUsername(),
-		ParentSession: req.GetParentSession(),
-		PublicAddr:    req.GetPublicAddr(),
-		ClusterName:   req.GetClusterName(),
-		SessionID:     req.GetSessionID(),
+		Username:    req.GetUsername(),
+		PublicAddr:  req.GetPublicAddr(),
+		ClusterName: req.GetClusterName(),
 	})
 	if err != nil {
 		return nil, trail.ToGRPC(err)
@@ -951,19 +949,6 @@ func (g *GRPCServer) CreateAppSession(ctx context.Context, req *proto.CreateAppS
 	return &proto.CreateAppSessionResponse{
 		Session: sess,
 	}, nil
-}
-
-// UpsertAppSession saves the provided application web session.
-func (g *GRPCServer) UpsertAppSession(ctx context.Context, req *proto.UpsertAppSessionRequest) (*empty.Empty, error) {
-	auth, err := g.authenticate(ctx)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	err = auth.UpsertAppSession(ctx, req.Session)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	return &empty.Empty{}, nil
 }
 
 // DeleteAppSession removes an application web session.

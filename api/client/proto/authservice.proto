@@ -425,26 +425,17 @@ message GetAppSessionsResponse {
 
 // CreateAppSessionRequest contains the parameters to request a application web session.
 message CreateAppSessionRequest {
+    reserved 2;
     // Username is the name of the user requesting the session.
     string Username = 1 [ (gogoproto.jsontag) = "username" ];
-    // ParentSession is the session ID of the parent session.
-    string ParentSession = 2 [ (gogoproto.jsontag) = "parent_session" ];
     // PublicAddr is the public address the application.
     string PublicAddr = 3 [ (gogoproto.jsontag) = "public_addr" ];
     // ClusterName is cluster within which the application is running.
     string ClusterName = 4 [ (gogoproto.jsontag) = "cluster_name" ];
-    //
-    string SessionID = 5 [ (gogoproto.jsontag) = "session_id" ];
 }
 
 // CreateAppSessionResponse contains the requested application web session.
 message CreateAppSessionResponse {
-    // Session is the application web session.
-    types.WebSessionV2 Session = 1 [ (gogoproto.jsontag) = "session" ];
-}
-
-// UpsertAppSessionRequest is a request to save an app session.
-message UpsertAppSessionRequest {
     // Session is the application web session.
     types.WebSessionV2 Session = 1 [ (gogoproto.jsontag) = "session" ];
 }
@@ -907,8 +898,6 @@ service AuthService {
     rpc DeleteAppSession(DeleteAppSessionRequest) returns (google.protobuf.Empty);
     // DeleteAllAppSessions removes all application web sessions.
     rpc DeleteAllAppSessions(google.protobuf.Empty) returns (google.protobuf.Empty);
-    // UpsertAppSession saves an application session.
-    rpc UpsertAppSession(UpsertAppSessionRequest) returns (google.protobuf.Empty);
 
     // GetWebSession gets a web session.
     rpc GetWebSession(types.GetWebSessionRequest) returns (GetWebSessionResponse);

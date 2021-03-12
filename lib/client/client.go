@@ -514,55 +514,30 @@ func (proxy *ProxyClient) GetAppServers(ctx context.Context, namespace string) (
 	return servers, nil
 }
 
-func (proxy *ProxyClient) CreateAppSession(ctx context.Context, req types.CreateAppSessionRequest) error {
+// CreateAppSession creates a new application access session.
+func (proxy *ProxyClient) CreateAppSession(ctx context.Context, req types.CreateAppSessionRequest) (types.WebSession, error) {
 	clusterName, err := proxy.RootClusterName()
 	if err != nil {
-		return trace.Wrap(err)
+		return nil, trace.Wrap(err)
 	}
 	authClient, err := proxy.ConnectToCluster(ctx, clusterName, true)
 	if err != nil {
-		return trace.Wrap(err)
+		return nil, trace.Wrap(err)
 	}
 	ws, err := authClient.CreateAppSession(ctx, req)
 	if err != nil {
-		return trace.Wrap(err)
+		return nil, trace.Wrap(err)
 	}
 	// Make sure to wait for the created app session to propagate through the cache.
 	accessPoint, err := proxy.ClusterAccessPoint(ctx, clusterName, true)
 	if err != nil {
-		return trace.Wrap(err)
+		return nil, trace.Wrap(err)
 	}
 	err = auth.WaitForAppSession(ctx, ws.GetName(), ws.GetUser(), accessPoint)
 	if err != nil {
-		return trace.Wrap(err)
+		return nil, trace.Wrap(err)
 	}
-	return nil
-}
-
-// UpsertAppSession saves the provided application access session.
-func (proxy *ProxyClient) UpsertAppSession(ctx context.Context, session types.WebSession) error {
-	clusterName, err := proxy.RootClusterName()
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	authClient, err := proxy.ConnectToCluster(ctx, clusterName, true)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	err = authClient.UpsertAppSession(ctx, session)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	// Make sure to wait for the created app session to propagate through the cache.
-	accessPoint, err := proxy.ClusterAccessPoint(ctx, clusterName, true)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	err = auth.WaitForAppSession(ctx, session.GetName(), session.GetUser(), accessPoint)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	return nil
+	return ws, nil
 }
 
 // DeleteAppSession removes the specified application access session.

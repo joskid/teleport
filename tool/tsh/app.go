@@ -26,7 +26,6 @@ import (
 	"github.com/gravitational/teleport/lib/tlsca"
 
 	"github.com/gravitational/trace"
-	"github.com/pborman/uuid"
 )
 
 // onAppLogin implements "tsh app login" command.
@@ -43,11 +42,24 @@ func onAppLogin(cf *CLIConf) error {
 	if err != nil {
 		return trace.Wrap(err)
 	}
-	sessionID, err := issueAppCert(cf, tc, app, profile)
+	ws, err := tc.CreateAppSession(cf.Context, types.CreateAppSessionRequest{
+		Username:    tc.Username,
+		PublicAddr:  app.PublicAddr,
+		ClusterName: tc.SiteName,
+	})
 	if err != nil {
 		return trace.Wrap(err)
 	}
-	err = createAppSession(cf, tc, app, sessionID)
+	err = tc.ReissueUserCerts(cf.Context, client.ReissueParams{
+		RouteToCluster: tc.SiteName,
+		RouteToApp: proto.RouteToApp{
+			Name:        app.Name,
+			SessionID:   ws.GetName(),
+			PublicAddr:  app.PublicAddr,
+			ClusterName: tc.SiteName,
+		},
+		AccessRequests: profile.ActiveRequests.AccessRequests,
+	})
 	if err != nil {
 		return trace.Wrap(err)
 	}
@@ -66,6 +78,7 @@ func getRegisteredApp(cf *CLIConf, tc *client.TeleportClient) (app *types.App, e
 			for _, a := range server.GetApps() {
 				if a.Name == cf.AppName {
 					app = a
+					return nil
 				}
 			}
 		}
@@ -78,56 +91,6 @@ func getRegisteredApp(cf *CLIConf, tc *client.TeleportClient) (app *types.App, e
 		return nil, trace.NotFound("app %q not found, use `tsh app ls` to see registered apps", cf.AppName)
 	}
 	return app, nil
-}
-
-// issueAppCert reissues user certificate with routing information for the
-// specified app encoded into it.
-func issueAppCert(cf *CLIConf, tc *client.TeleportClient, app *types.App, profile *client.ProfileStatus) (string, error) {
-	sessionID := uuid.New()
-	err := tc.ReissueUserCerts(cf.Context, client.ReissueParams{
-		RouteToCluster: tc.SiteName,
-		RouteToApp: proto.RouteToApp{
-			Name:        app.Name,
-			SessionID:   sessionID,
-			PublicAddr:  app.PublicAddr,
-			ClusterName: tc.SiteName,
-		},
-		AccessRequests: profile.ActiveRequests.AccessRequests,
-	})
-	if err != nil {
-		return "", trace.Wrap(err)
-	}
-	return sessionID, nil
-}
-
-// createAppSession creates a new application access web session for the
-// specified application.
-func createAppSession(cf *CLIConf, tc *client.TeleportClient, app *types.App, sessionID string) error {
-	// key, err := tc.LocalAgent().GetKey(client.WithAppCerts(tc.SiteName, app.Name))
-	// if err != nil {
-	// 	return trace.Wrap(err)
-	// }
-	err := tc.CreateAppSession(cf.Context, types.CreateAppSessionRequest{
-		Username:    tc.Username,
-		PublicAddr:  app.PublicAddr,
-		ClusterName: tc.SiteName,
-		SessionID:   sessionID,
-	})
-	// err := tc.UpsertAppSession(cf.Context, types.NewWebSession(sessionID,
-	// 	types.KindWebSession,
-	// 	types.KindAppSession,
-	// 	types.WebSessionSpecV2{
-	// 		User: tc.Username,
-	// 		//Priv:    key.Priv,
-	// 		//Pub:     key.Pub,
-	// 		//TLSCert: key.AppTLSCerts[app.Name],
-	// 		// The app session TTL will be set on the backend to make sure
-	// 		// it does not exceed TTL of the identity.
-	// 	}))
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	return nil
 }
 
 // onAppLogout implements "tsh app logout" command.
@@ -151,7 +114,7 @@ func onAppLogout(cf *CLIConf) error {
 			}
 		}
 		if len(logout) == 0 {
-			return trace.BadParameter("Not logged into app %q",
+			return trace.BadParameter("not logged into app %q",
 				cf.AppName)
 		}
 	}
@@ -196,11 +159,11 @@ func formatAppConfig(tc *client.TeleportClient, profile *client.ProfileStatus, a
 	case appFormatURI:
 		return fmt.Sprintf("https://%v:%v", appPublicAddr, tc.WebProxyPort())
 	case appFormatCA:
-		return fmt.Sprintf("%v", profile.CACertPath())
+		return profile.CACertPath()
 	case appFormatCert:
-		return fmt.Sprintf("%v", profile.AppCertPath(appName))
+		return profile.AppCertPath(appName)
 	case appFormatKey:
-		return fmt.Sprintf("%v", profile.KeyPath())
+		return profile.KeyPath()
 	case appFormatCURL:
 		return fmt.Sprintf(`curl \
   --cacert %v \
@@ -225,20 +188,20 @@ Key:       %v
 // pickActiveApp returns the app the current profile is logged into.
 //
 // If logged into multiple apps, returns an error unless one was specified
-// explicily on CLI.
+// explicitly on CLI.
 func pickActiveApp(cf *CLIConf) (*tlsca.RouteToApp, error) {
 	profile, err := client.StatusCurrent("", cf.Proxy)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
 	if len(profile.Apps) == 0 {
-		return nil, trace.NotFound("Please login using 'tsh app login' first")
+		return nil, trace.NotFound("please login using 'tsh app login' first")
 	}
 	name := cf.AppName
 	if name == "" {
 		apps := profile.AppNames()
 		if len(apps) > 1 {
-			return nil, trace.BadParameter("Multiple apps are available (%v), please specify one via CLI argument",
+			return nil, trace.BadParameter("multiple apps are available (%v), please specify one via CLI argument",
 				strings.Join(apps, ", "))
 		}
 		name = apps[0]
@@ -248,7 +211,7 @@ func pickActiveApp(cf *CLIConf) (*tlsca.RouteToApp, error) {
 			return &app, nil
 		}
 	}
-	return nil, trace.NotFound("Not logged into app %q", name)
+	return nil, trace.NotFound("not logged into app %q", name)
 }
 
 const (

@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -118,6 +119,11 @@ func TestAppAccessClientCert(t *testing.T) {
 			inTLSConfig:   pack.makeTLSConfig(t, pack.leafAppPublicAddr, pack.leafAppClusterName),
 			outStatusCode: http.StatusOK,
 			outMessage:    pack.leafMessage,
+		},
+		{
+			desc:          "root cluster, invalid session ID",
+			inTLSConfig:   pack.makeTLSConfigNoSession(t, pack.rootAppPublicAddr, pack.rootAppClusterName),
+			outStatusCode: http.StatusFound,
 		},
 	}
 	for _, tt := range tests {
@@ -293,6 +299,7 @@ type pack struct {
 
 	rootCluster   *TeleInstance
 	rootAppServer *service.TeleportProcess
+	rootCertPool  *x509.CertPool
 
 	rootAppName        string
 	rootAppPublicAddr  string
@@ -513,19 +520,22 @@ func setup(t *testing.T) *pack {
 	t.Cleanup(func() { p.leafAppServer.Close() })
 
 	// Create user for tests.
-	p.createUser(t)
+	p.initUser(t)
 
 	// Create Web UI session.
-	p.createWebSession(t)
+	p.initWebSession(t)
+
+	// Initialize cert pool with root CA's.
+	p.initCertPool(t)
 
 	// Initialize Teleport client with the user's credentials.
-	p.createTeleportClient(t)
+	p.initTeleportClient(t)
 
 	return p
 }
 
-// createUser will create a user within the root cluster.
-func (p *pack) createUser(t *testing.T) {
+// initUser will create a user within the root cluster.
+func (p *pack) initUser(t *testing.T) {
 	p.username = uuid.New()
 	p.password = uuid.New()
 
@@ -547,8 +557,8 @@ func (p *pack) createUser(t *testing.T) {
 	p.user = user
 }
 
-// createWebSession creates a Web UI session within the root cluster.
-func (p *pack) createWebSession(t *testing.T) {
+// initWebSession creates a Web UI session within the root cluster.
+func (p *pack) initWebSession(t *testing.T) {
 	csReq, err := json.Marshal(web.CreateSessionReq{
 		User: p.username,
 		Pass: p.password,
@@ -601,7 +611,9 @@ func (p *pack) createWebSession(t *testing.T) {
 	p.webToken = csResp.Token
 }
 
-func (p *pack) createTeleportClient(t *testing.T) {
+// initTeleportClient initializes a Teleport client with this pack's user
+// credentials.
+func (p *pack) initTeleportClient(t *testing.T) {
 	creds, err := GenerateUserCreds(UserCredsRequest{
 		Process:  p.rootCluster.Process,
 		Username: p.user.GetName(),
@@ -665,26 +677,8 @@ func (p *pack) createAppSession(t *testing.T, publicAddr, clusterName string) st
 	return casResp.CookieValue
 }
 
-// makeTLSConfig returns TLS config suitable for making an app access request.
-func (p *pack) makeTLSConfig(t *testing.T, publicAddr, clusterName string) *tls.Config {
-	privateKey, publicKey, err := p.rootCluster.Process.GetAuthServer().GenerateKeyPair("")
-	require.NoError(t, err)
-
-	sessionID := uuid.New()
-	certificate, err := p.rootCluster.Process.GetAuthServer().GenerateUserAppTestCert(
-		auth.AppTestCertRequest{
-			PublicKey:   publicKey,
-			Username:    p.user.GetName(),
-			TTL:         time.Hour,
-			PublicAddr:  publicAddr,
-			ClusterName: clusterName,
-			SessionID:   sessionID,
-		})
-	require.NoError(t, err)
-
-	tlsCert, err := tls.X509KeyPair(certificate, privateKey)
-	require.NoError(t, err)
-
+// initCertPool initializes root cluster CA pool.
+func (p *pack) initCertPool(t *testing.T) {
 	authClient := p.rootCluster.GetSiteAPI(p.rootCluster.Secrets.SiteName)
 	ca, err := authClient.GetCertAuthority(services.CertAuthID{
 		Type:       services.HostCA,
@@ -695,41 +689,65 @@ func (p *pack) makeTLSConfig(t *testing.T, publicAddr, clusterName string) *tls.
 	pool, err := services.CertPool(ca)
 	require.NoError(t, err)
 
-	creds, err := GenerateUserCreds(UserCredsRequest{
-		Process:  p.rootCluster.Process,
-		Username: p.user.GetName(),
-	})
+	p.rootCertPool = pool
+}
+
+// makeTLSConfig returns TLS config suitable for making an app access request.
+func (p *pack) makeTLSConfig(t *testing.T, publicAddr, clusterName string) *tls.Config {
+	privateKey, publicKey, err := p.rootCluster.Process.GetAuthServer().GenerateKeyPair("")
 	require.NoError(t, err)
 
-	tc, err := p.rootCluster.NewClientWithCreds(ClientConfig{
-		Login:   p.user.GetName(),
-		Cluster: p.rootCluster.Secrets.SiteName,
-		Host:    Loopback,
-		Port:    p.rootCluster.GetPortSSHInt(),
-	}, *creds)
-	require.NoError(t, err)
-
-	err = tc.CreateAppSession(context.Background(), types.CreateAppSessionRequest{
+	ws, err := p.tc.CreateAppSession(context.Background(), types.CreateAppSessionRequest{
 		Username:    p.user.GetName(),
 		PublicAddr:  publicAddr,
 		ClusterName: clusterName,
-		SessionID:   sessionID,
 	})
+	require.NoError(t, err)
 
-	// err = tc.UpsertAppSession(context.Background(),
-	// 	types.NewWebSession(sessionID,
-	// 		types.KindWebSession,
-	// 		types.KindAppSession,
-	// 		types.WebSessionSpecV2{
-	// 			User:    p.user.GetName(),
-	// 			Priv:    privateKey,
-	// 			Pub:     publicKey,
-	// 			TLSCert: certificate,
-	// 		}))
+	certificate, err := p.rootCluster.Process.GetAuthServer().GenerateUserAppTestCert(
+		auth.AppTestCertRequest{
+			PublicKey:   publicKey,
+			Username:    p.user.GetName(),
+			TTL:         time.Hour,
+			PublicAddr:  publicAddr,
+			ClusterName: clusterName,
+			SessionID:   ws.GetName(),
+		})
+	require.NoError(t, err)
+
+	tlsCert, err := tls.X509KeyPair(certificate, privateKey)
 	require.NoError(t, err)
 
 	return &tls.Config{
-		RootCAs:            pool,
+		RootCAs:            p.rootCertPool,
+		Certificates:       []tls.Certificate{tlsCert},
+		InsecureSkipVerify: true,
+	}
+}
+
+// makeTLSConfigNoSession returns TLS config for application access without
+// creating session to simulate nonexistent session scenario.
+func (p *pack) makeTLSConfigNoSession(t *testing.T, publicAddr, clusterName string) *tls.Config {
+	privateKey, publicKey, err := p.rootCluster.Process.GetAuthServer().GenerateKeyPair("")
+	require.NoError(t, err)
+
+	certificate, err := p.rootCluster.Process.GetAuthServer().GenerateUserAppTestCert(
+		auth.AppTestCertRequest{
+			PublicKey:   publicKey,
+			Username:    p.user.GetName(),
+			TTL:         time.Hour,
+			PublicAddr:  publicAddr,
+			ClusterName: clusterName,
+			// Use arbitrary session ID
+			SessionID: uuid.New(),
+		})
+	require.NoError(t, err)
+
+	tlsCert, err := tls.X509KeyPair(certificate, privateKey)
+	require.NoError(t, err)
+
+	return &tls.Config{
+		RootCAs:            p.rootCertPool,
 		Certificates:       []tls.Certificate{tlsCert},
 		InsecureSkipVerify: true,
 	}

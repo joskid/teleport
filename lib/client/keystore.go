@@ -464,7 +464,13 @@ func (o withDBCerts) deleteKey(dirPath, username string) error {
 
 // WithAppCerts returns a GetKeyOption to load application access certificates
 // from the store for a given Teleport cluster.
-func WithAppCerts(teleportClusterName, appName string) KeyOption {
+func WithAppCerts(teleportClusterName string) KeyOption {
+	return withAppCerts{teleportClusterName: teleportClusterName}
+}
+
+// WithNamedAppCerts returns a GetKeyOption to load application access certificates
+// from the store for a given Teleport cluster and particular application.
+func WithNamedAppCerts(teleportClusterName, appName string) KeyOption {
 	return withAppCerts{teleportClusterName: teleportClusterName, appName: appName}
 }
 

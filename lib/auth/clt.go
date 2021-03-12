@@ -2163,9 +2163,9 @@ func (c *Client) GetDatabaseServers(ctx context.Context, namespace string, opts 
 	return resp, nil
 }
 
-// UpsertAppSession saves the provided application web session.
+// UpsertAppSession not implemented: can only be called locally.
 func (c *Client) UpsertAppSession(ctx context.Context, session services.WebSession) error {
-	return c.APIClient.UpsertAppSession(ctx, session)
+	return trace.NotImplemented(notImplementedMessage)
 }
 
 // ResumeAuditStream resumes existing audit stream.

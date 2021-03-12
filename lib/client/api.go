@@ -481,7 +481,7 @@ func readProfile(profileDir string, profileName string) (*ProfileStatus, error) 
 	key, err := store.GetKey(profile.Name(), profile.Username,
 		WithKubeCerts(profile.SiteName),
 		WithDBCerts(profile.SiteName, ""),
-		WithAppCerts(profile.SiteName, ""))
+		WithAppCerts(profile.SiteName))
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -1691,23 +1691,14 @@ func (tc *TeleportClient) ListAppServers(ctx context.Context) ([]services.Server
 	return proxyClient.GetAppServers(ctx, tc.Namespace)
 }
 
-func (tc *TeleportClient) CreateAppSession(ctx context.Context, req types.CreateAppSessionRequest) error {
+// CreateAppSession creates a new application access session.
+func (tc *TeleportClient) CreateAppSession(ctx context.Context, req types.CreateAppSessionRequest) (types.WebSession, error) {
 	proxyClient, err := tc.ConnectToProxy(ctx)
 	if err != nil {
-		return trace.Wrap(err)
+		return nil, trace.Wrap(err)
 	}
 	defer proxyClient.Close()
 	return proxyClient.CreateAppSession(ctx, req)
-}
-
-// UpsertAppSession saves the provided application access session.
-func (tc *TeleportClient) UpsertAppSession(ctx context.Context, session types.WebSession) error {
-	proxyClient, err := tc.ConnectToProxy(ctx)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	defer proxyClient.Close()
-	return proxyClient.UpsertAppSession(ctx, session)
 }
 
 // DeleteAppSession removes the specified application access session.
@@ -1946,7 +1937,7 @@ func (tc *TeleportClient) Logout() error {
 	return tc.localAgent.DeleteKey(
 		WithKubeCerts(tc.SiteName),
 		WithDBCerts(tc.SiteName, ""),
-		WithAppCerts(tc.SiteName, ""))
+		WithAppCerts(tc.SiteName))
 }
 
 // LogoutDatabase removes certificate for a particular database.
@@ -1963,7 +1954,7 @@ func (tc *TeleportClient) LogoutDatabase(dbName string) error {
 		WithDBCerts(tc.SiteName, dbName))
 }
 
-// LogoutApp removes certificate for a particular app.
+// LogoutApp removes certificate for the specified app.
 func (tc *TeleportClient) LogoutApp(appName string) error {
 	if tc.localAgent == nil {
 		return nil
@@ -1974,7 +1965,7 @@ func (tc *TeleportClient) LogoutApp(appName string) error {
 	return tc.localAgent.keyStore.DeleteKeyOption(
 		tc.localAgent.proxyHost,
 		tc.localAgent.username,
-		WithAppCerts(tc.SiteName, appName))
+		WithNamedAppCerts(tc.SiteName, appName))
 }
 
 // LogoutAll removes all certificates for all users from the filesystem
