@@ -18,7 +18,9 @@ The DynamodDB tests are not run by default. To run them locally, try:
 go test -tags dynamodb -v  ./lib/backend/dynamo
 ```
 
-*NOTE:* you will need to provide AWS credentials (e.g. in `~/.aws/credentials`, or via environment vars) for the tests to work.
+*NOTE:* you will need to provide a AWS credentials & a default region 
+(e.g. in your `~/.aws/credentials` & `~/.aws/config` files, or via
+environment vars) for the tests to work.
 
 ### Quick Start
 
