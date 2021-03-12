@@ -240,7 +240,7 @@ func TestAuthPreferenceResetDynamicToConfigFile(t *testing.T) {
 	require.False(t, storedAuthPref.IsFromDefaults())
 	require.Equal(t, constants.SecondFactorOff, storedAuthPref.GetSecondFactor())
 
-	// Attempt to reset back to default should be unsuccessful.
+	// Attempt to reset back to default should be a no-op.
 	conf.AuthPreference = services.DefaultAuthPreference()
 	authServer, err = Init(conf)
 	require.NoError(t, err)
