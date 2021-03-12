@@ -55,7 +55,6 @@ func (s *Server) CreateAppSession(ctx context.Context, req services.CreateAppSes
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
-
 	certs, err := s.generateUserCert(certRequest{
 		user:      user,
 		publicKey: publicKey,
@@ -78,7 +77,7 @@ func (s *Server) CreateAppSession(ctx context.Context, req services.CreateAppSes
 		return nil, trace.Wrap(err)
 	}
 
-	// // Create services.WebSession for this session.
+	// Create services.WebSession for this session.
 	sessionID, err := utils.CryptoRandomHex(SessionTokenBytes)
 	if err != nil {
 		return nil, trace.Wrap(err)
