@@ -28,8 +28,6 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/google/go-cmp/cmp"
-
 	"github.com/gravitational/teleport"
 	"github.com/gravitational/teleport/api/constants"
 	"github.com/gravitational/teleport/api/types"
@@ -52,6 +50,7 @@ import (
 	"github.com/gravitational/trace"
 
 	"github.com/coreos/go-oidc/jose"
+	"github.com/google/go-cmp/cmp"
 	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/require"
 	. "gopkg.in/check.v1"

@@ -75,7 +75,7 @@ func NewAuthPreference(spec AuthPreferenceSpecV2) (AuthPreference, error) {
 // AuthPreferenceV2 labelled as originating from config file.
 func NewAuthPreferenceFromConfigFile(spec AuthPreferenceSpecV2) (AuthPreference, error) {
 	return NewAuthPreferenceWithLabels(spec, map[string]string{
-		OriginLabel: OriginConfigFile,
+		OriginLabel: string(OriginConfigFile),
 	})
 }
 
@@ -108,7 +108,7 @@ func DefaultAuthPreference() AuthPreference {
 			Name:      MetaNameClusterAuthPreference,
 			Namespace: defaults.Namespace,
 			Labels: map[string]string{
-				OriginLabel: OriginDefaults,
+				OriginLabel: string(OriginDefaults),
 			},
 		},
 		Spec: AuthPreferenceSpecV2{
@@ -183,6 +183,11 @@ func (c *AuthPreferenceV2) SetResourceID(id int64) {
 	c.Metadata.ID = id
 }
 
+// Origin returns the origin value of the resource.
+func (c *AuthPreferenceV2) Origin() OriginValue {
+	return c.Metadata.Origin()
+}
+
 // GetKind returns resource kind.
 func (c *AuthPreferenceV2) GetKind() string {
 	return c.Kind
@@ -196,16 +201,6 @@ func (c *AuthPreferenceV2) GetSubKind() string {
 // SetSubKind sets resource subkind.
 func (c *AuthPreferenceV2) SetSubKind(sk string) {
 	c.SubKind = sk
-}
-
-// IsFromConfigFile returns true if the resource originates from config file.
-func (c *AuthPreferenceV2) IsFromConfigFile() bool {
-	return c.Metadata.Origin() == OriginConfigFile
-}
-
-// IsFromConfigFile returns true if the resource originates from defaults.
-func (c *AuthPreferenceV2) IsFromDefaults() bool {
-	return c.Metadata.Origin() == OriginDefaults
 }
 
 // GetType returns the type of authentication.

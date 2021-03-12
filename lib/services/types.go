@@ -138,9 +138,8 @@ type (
 )
 
 var (
-	NewAuthPreference               = types.NewAuthPreference
-	NewAuthPreferenceFromConfigFile = types.NewAuthPreferenceFromConfigFile
-	DefaultAuthPreference           = types.DefaultAuthPreference
+	NewAuthPreference     = types.NewAuthPreference
+	DefaultAuthPreference = types.DefaultAuthPreference
 )
 
 // authority.go
@@ -301,7 +300,6 @@ var (
 type (
 	Resource            = types.Resource
 	ResourceWithSecrets = types.ResourceWithSecrets
-	ResourceWithOrigin  = types.ResourceWithOrigin
 )
 
 var (

@@ -284,18 +284,9 @@ func Init(cfg InitConfig, opts ...ServerOption) (*Server, error) {
 	}
 	log.Infof("Updating cluster configuration: %v.", cfg.StaticTokens)
 
-	// Update the auth preference only if the stored value shouldn't be retained.
-	storedAuthPref, getErr := asrv.GetAuthPreference()
-	updateAuthPref, err := shouldUpdateResource(cfg.AuthPreference, storedAuthPref, getErr)
+	err = setAuthPreference(asrv, cfg.AuthPreference)
 	if err != nil {
 		return nil, trace.Wrap(err)
-	}
-	if updateAuthPref {
-		err = asrv.SetAuthPreference(cfg.AuthPreference)
-		if err != nil {
-			return nil, trace.Wrap(err)
-		}
-		log.Infof("Updating auth preference: %v.", cfg.AuthPreference)
 	}
 
 	// always create the default namespace
@@ -491,22 +482,44 @@ func Init(cfg InitConfig, opts ...ServerOption) (*Server, error) {
 	return asrv, nil
 }
 
-// shouldUpdateResource determines whether the candidate resource
-// should be used to replace the currently stored resource.
+func setAuthPreference(asrv *Server, newAuthPref services.AuthPreference) error {
+	storedAuthPref, err := asrv.GetAuthPreference()
+	if err != nil {
+		if !trace.IsNotFound(err) {
+			return trace.Wrap(err)
+		}
+		storedAuthPref = nil
+	}
+	shouldReplace, err := shouldInitReplaceResource(storedAuthPref, newAuthPref)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	if shouldReplace {
+		err = asrv.SetAuthPreference(newAuthPref)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		log.Infof("Updating auth preference: %v.", newAuthPref)
+	}
+	return nil
+}
+
+// shouldInitReplaceResource determines whether the candidate resource should
+// be used to replace the stored resource during auth server initialization.
 //
 // For more details, see Section "Auth server initialization"
 // in rfd/0016-dynamic-configuration.md
-func shouldUpdateResource(candidate, stored services.ResourceWithOrigin, getErr error) (bool, error) {
-	if getErr != nil {
-		if !trace.IsNotFound(getErr) {
-			return false, getErr
-		}
+func shouldInitReplaceResource(stored, candidate types.ResourceWithOrigin) (bool, error) {
+	if candidate.Origin() != types.OriginConfigFile && candidate.Origin() != types.OriginDefaults {
+		return false, trace.BadParameter("candidate origin must be either config file or defaults (this is a bug)")
+	}
+	if candidate.Origin() == types.OriginConfigFile {
 		return true, nil
 	}
-	if !candidate.IsFromDefaults() {
+	if stored == nil {
 		return true, nil
 	}
-	return stored.IsFromConfigFile() || stored.IsFromDefaults(), nil
+	return stored.Origin() == types.OriginConfigFile || stored.Origin() == types.OriginDefaults, nil
 }
 
 func migrateLegacyResources(ctx context.Context, cfg InitConfig, asrv *Server) error {

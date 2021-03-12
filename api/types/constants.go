@@ -204,6 +204,9 @@ const (
 	V1 = "v1"
 )
 
+// WebSessionSubKinds lists subkinds of web session resources
+var WebSessionSubKinds = []string{KindAppSession, KindWebSession}
+
 const (
 	// VerbList is used to list all objects. Does not imply the ability to read a single object.
 	VerbList = "list"
@@ -228,6 +231,8 @@ const (
 	VerbRotate = "rotate"
 )
 
+type OriginValue string
+
 const (
 	// OriginLabel is a resource metadata label name used to identify a source
 	// that the resource originates from.
@@ -235,15 +240,12 @@ const (
 
 	// OriginConfigFile is an origin value indicating that the resource is
 	// derived from static configuration.
-	OriginConfigFile = "config-file"
+	OriginConfigFile OriginValue = "config-file"
 
 	// OriginConfigFile is an origin value indicating that the resource was
 	// constructed as a default value.
-	OriginDefaults = "defaults"
+	OriginDefaults OriginValue = "defaults"
 )
-
-// WebSessionSubKinds lists subkinds of web session resources
-var WebSessionSubKinds = []string{KindAppSession, KindWebSession}
 
 const (
 	// RecordAtNode is the default. Sessions are recorded at Teleport nodes.

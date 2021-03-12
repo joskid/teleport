@@ -2009,15 +2009,19 @@ func (a *ServerWithRoles) GetAuthPreference() (services.AuthPreference, error) {
 	return a.authServer.GetAuthPreference()
 }
 
-func (a *ServerWithRoles) SetAuthPreference(cap services.AuthPreference) error {
-	if err := a.action(defaults.Namespace, services.KindClusterAuthPreference, services.VerbCreate); err != nil {
-		return trace.Wrap(err)
-	}
-	if err := a.action(defaults.Namespace, services.KindClusterAuthPreference, services.VerbUpdate); err != nil {
+func (a *ServerWithRoles) SetAuthPreference(newAuthPref services.AuthPreference) error {
+	storedAuthPref, err := a.authServer.GetAuthPreference()
+	if err != nil {
 		return trace.Wrap(err)
 	}
 
-	return a.authServer.SetAuthPreference(cap)
+	for _, verb := range verbsForResourceWithOrigin(storedAuthPref, newAuthPref) {
+		if err := a.action(defaults.Namespace, services.KindClusterAuthPreference, verb); err != nil {
+			return trace.Wrap(err)
+		}
+	}
+
+	return a.authServer.SetAuthPreference(newAuthPref)
 }
 
 // DeleteAllTokens not implemented: can only be called locally.
@@ -2647,4 +2651,17 @@ func NewAdminAuthServer(authServer *Server, sessions session.Service, alog event
 		alog:       alog,
 		sessions:   sessions,
 	}, nil
+}
+
+// verbsForResourceWithOrigin determines the verbs/actions required of a role
+// to replace the resource currently stored in the backend with the candidate.
+func verbsForResourceWithOrigin(stored, candidate types.ResourceWithOrigin) []string {
+	verbs := []string{types.VerbUpdate}
+	if stored.Origin() == types.OriginConfigFile {
+		verbs = append(verbs, types.VerbCreate)
+	}
+	if candidate.Origin() == types.OriginDefaults {
+		verbs = append(verbs, types.VerbDelete)
+	}
+	return verbs
 }

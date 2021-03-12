@@ -2302,6 +2302,10 @@ func (s *APIServer) setClusterAuthPreference(auth ClientI, w http.ResponseWriter
 		return nil, trace.Wrap(err)
 	}
 
+	if isReservedOrigin(cap.Origin()) {
+		return nil, trace.BadParameter("origin %q is reserved for system use", cap.Origin())
+	}
+
 	err = auth.SetAuthPreference(cap)
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -2492,6 +2496,12 @@ func (s *APIServer) getServerID(r *http.Request) (string, error) {
 	// "192_168_1_1.<cluster-name>" so this code can't rely on it being
 	// uuid4 to account for clusters upgraded from older versions.
 	return strings.TrimSuffix(role.Username, "."+clusterName), nil
+}
+
+// isReservedOrigin returns true if the given origin is reserved for system use
+// and must not be accepted within a user resource.
+func isReservedOrigin(origin types.OriginValue) bool {
+	return origin == types.OriginConfigFile || origin == types.OriginDefaults
 }
 
 func message(msg string) map[string]interface{} {

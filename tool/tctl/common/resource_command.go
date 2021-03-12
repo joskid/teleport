@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/gravitational/teleport"
+	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/teleport/lib/auth"
 	"github.com/gravitational/teleport/lib/client"
 	"github.com/gravitational/teleport/lib/defaults"
@@ -418,18 +419,14 @@ func (rc *ResourceCommand) createAuthPreference(client auth.ClientI, raw service
 		return trace.Wrap(err)
 	}
 
-	exists := !storedAuthPref.IsFromDefaults()
+	exists := storedAuthPref.Origin() != types.OriginDefaults
 	if !rc.force && exists {
 		return trace.AlreadyExists("non-default cluster auth preference already exists")
 	}
 
-	managedByStatic := storedAuthPref.IsFromConfigFile()
+	managedByStatic := storedAuthPref.Origin() == types.OriginConfigFile
 	if !rc.confirm && managedByStatic {
-		return trace.Errorf("This resource is managed by static configuration. " +
-			"We recommend removing configuration from teleport.yaml, " +
-			"restarting the servers and trying this command again.\n\n" +
-			"If you would still like to proceed, re-run the command with both --force " +
-			"and --confirm flags.")
+		return trace.Errorf(managedByStaticMsg)
 	}
 
 	if err := client.SetAuthPreference(newAuthPref); err != nil {
@@ -777,3 +774,7 @@ func UpsertVerb(exists bool, force bool) string {
 		return "unknown"
 	}
 }
+
+const managedByStaticMsg = `This resource is managed by static configuration. We recommend removing configuration from teleport.yaml, restarting the servers and trying this command again.
+
+If you would still like to proceed, re-run the command with both --force and --confirm flags.`
