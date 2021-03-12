@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v2"
 )
@@ -23,7 +24,23 @@ func main() {
 	pipelines = append(pipelines, promoteBuildPipeline())
 	pipelines = append(pipelines, updateDocsPipeline())
 
-	if err := writePipelines(".drone.yml", pipelines); err != nil {
+	targetDir := ""
+	if len(os.Args) > 1 {
+		if os.Args[1] == "check" {
+			currentDir, _ := os.Getwd()
+			targetDir = filepath.Join(currentDir, "dronegen-check")
+			fmt.Printf("--> Using check mode, will write individual pipelines to %s\n", targetDir)
+			_, err := os.Stat(targetDir)
+			if err != nil {
+				if err := os.Mkdir(targetDir, 0755); err != nil {
+					fmt.Println("Couldn't create dir " + targetDir)
+					os.Exit(1)
+				}
+			}
+		}
+	}
+
+	if err := writePipelines(".drone.yml", pipelines, targetDir); err != nil {
 		fmt.Println("failed writing drone pipelines:", err)
 		os.Exit(1)
 	}
@@ -34,7 +51,7 @@ func main() {
 	}
 }
 
-func writePipelines(path string, newPipelines []pipeline) error {
+func writePipelines(path string, newPipelines []pipeline, outputDir string) error {
 	// Read the existing config and replace only those pipelines defined in
 	// newPipelines.
 	//
@@ -64,6 +81,18 @@ func writePipelines(path string, newPipelines []pipeline) error {
 	// Overwrite all existing pipelines with new ones that have the same name.
 	for i, p := range pipelines {
 		if np, ok := newPipelinesSet[p.Name]; ok {
+			// if outputDir is set (because we're running in check mode) then also output old and new pipelines to disk
+			if outputDir != "" {
+				marshal, err := yaml.Marshal(p.pipeline)
+				if err != nil {
+					panic("Couldn't marshal " + p.Name)
+				}
+				// write old pipeline
+				oldOut := filepath.Join(outputDir, fmt.Sprintf("%s.yaml", p.Name))
+				fmt.Printf("--> %s\n", p.Name)
+				ioutil.WriteFile(oldOut, marshal, 0664)
+			}
+
 			out, err := yaml.Marshal(np)
 			if err != nil {
 				return fmt.Errorf("failed to encode pipelines: %w", err)
@@ -72,6 +101,12 @@ func writePipelines(path string, newPipelines []pipeline) error {
 			out = append([]byte(np.comment), out...)
 			pipelines[i] = parsedPipeline{pipeline: np, raw: out}
 			delete(newPipelinesSet, np.Name)
+
+			if outputDir != "" {
+				// write new pipeline
+				newOut := filepath.Join(outputDir, fmt.Sprintf("%s-new.yaml", np.Name))
+				ioutil.WriteFile(newOut, out, 0664)
+			}
 		}
 	}
 	// If we decide to add new pipelines before everything is migrated to this
@@ -90,6 +125,11 @@ func writePipelines(path string, newPipelines []pipeline) error {
 	}
 	configData := bytes.Join(pipelinesEnc, []byte("\n---\n"))
 
+	// only write the updated .drone.yml file if we're not running in check mode, so we can
+	// iteratively improve on the pipeline
+	if outputDir != "" {
+		return nil
+	}
 	return ioutil.WriteFile(path, configData, 0664)
 }
 
