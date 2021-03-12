@@ -10,17 +10,6 @@ WARNING: Using DynamoDB involves reccuring charge from AWS.
 The table created by the backend will provision 5/5 R/W capacity.
 It should be covered by the free tier.
 
-### Building
-
-DynamoDB backend is not enabled by default. To enable it you have to 
-compile Teleport with `dynamodb` build flag.
-
-To build Teleport with DynamoDB enabled, run:
-
-```
-ADDFLAGS='-tags dynamodb' make build/teleport
-```
-
 ### Running tests
 
 The DynamodDB tests are not run by default. To run them locally, try:
