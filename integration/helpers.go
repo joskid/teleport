@@ -673,16 +673,16 @@ func (i *TeleInstance) CreateEx(trustedSecrets []*InstanceSecrets, tconf *servic
 
 // StartNode starts a SSH node and connects it to the cluster.
 func (i *TeleInstance) StartNode(tconf *service.Config) (*service.TeleportProcess, error) {
-	return i.startNode(tconf, false)
+	return i.startNode(tconf, i.GetPortAuth())
 }
 
 // StartReverseTunnelNode starts a SSH node and connects it to the cluster via reverse tunnel.
 func (i *TeleInstance) StartReverseTunnelNode(tconf *service.Config) (*service.TeleportProcess, error) {
-	return i.startNode(tconf, true)
+	return i.startNode(tconf, i.GetPortWeb())
 }
 
 // startNode starts a node and connects it to the cluster.
-func (i *TeleInstance) startNode(tconf *service.Config, reverseTunnel bool) (*service.TeleportProcess, error) {
+func (i *TeleInstance) startNode(tconf *service.Config, authPort string) (*service.TeleportProcess, error) {
 	dataDir, err := ioutil.TempDir("", "cluster-"+i.Secrets.SiteName)
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -690,11 +690,6 @@ func (i *TeleInstance) startNode(tconf *service.Config, reverseTunnel bool) (*se
 	i.tempDirs = append(i.tempDirs, dataDir)
 
 	tconf.DataDir = dataDir
-
-	authPort := i.GetPortAuth()
-	if reverseTunnel {
-		authPort = i.GetPortWeb()
-	}
 
 	authServer := utils.MustParseAddr(net.JoinHostPort(i.Hostname, authPort))
 	tconf.AuthServers = append(tconf.AuthServers, *authServer)

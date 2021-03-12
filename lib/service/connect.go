@@ -36,7 +36,9 @@ import (
 	"github.com/gravitational/teleport/lib/tlsca"
 	"github.com/gravitational/teleport/lib/utils"
 
+	"github.com/gravitational/roundtrip"
 	"github.com/gravitational/trace"
+
 	"github.com/sirupsen/logrus"
 )
 
@@ -328,6 +330,7 @@ func (process *TeleportProcess) firstTimeConnect(role teleport.Role) (*Connector
 		HostUUID: process.Config.HostUUID,
 		NodeName: process.Config.Hostname,
 	}
+	logger := process.log.WithField("node", id)
 	additionalPrincipals, dnsNames, err := process.getAdditionalPrincipals(role)
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -336,7 +339,7 @@ func (process *TeleportProcess) firstTimeConnect(role teleport.Role) (*Connector
 	if process.getLocalAuth() != nil {
 		// Auth service is on the same host, no need to go though the invitation
 		// procedure.
-		process.log.Debugf("This server has local Auth server started, using it to add role to the cluster.")
+		logger.Debugf("This server has local Auth server started, using it to add role to the cluster.")
 		identity, err = auth.LocalRegister(id, process.getLocalAuth(), additionalPrincipals, dnsNames, process.Config.AdvertiseIP)
 		if err != nil {
 			return nil, trace.Wrap(err)
@@ -346,7 +349,7 @@ func (process *TeleportProcess) firstTimeConnect(role teleport.Role) (*Connector
 		if process.Config.Token == "" {
 			return nil, trace.BadParameter("%v must join a cluster and needs a provisioning token", role)
 		}
-		process.log.Infof("Joining the cluster with a secure token.")
+		logger.Infof("Joining the cluster with a secure token.")
 		const reason = "first-time-connect"
 		keyPair, err := process.generateKeyPair(role, reason)
 		if err != nil {
@@ -375,7 +378,7 @@ func (process *TeleportProcess) firstTimeConnect(role teleport.Role) (*Connector
 		process.deleteKeyPair(role, reason)
 	}
 
-	process.log.Infof("%v has obtained credentials to connect to cluster.", role)
+	logger.Infof("%v has obtained credentials to connect to cluster.", role)
 	var connector *Connector
 	if role == teleport.RoleAdmin || role == teleport.RoleAuth {
 		connector = &Connector{
@@ -795,15 +798,28 @@ func (process *TeleportProcess) newClient(authServers []utils.NetAddr, identity 
 	process.log.Debugf("Attempting to connect to Auth Server directly.")
 	_, err = directClient.GetLocalClusterName()
 	if err != nil {
+		process.log.WithError(err).Warn("Failed to connect to Auth Server directly.")
 		// Don't attempt to connect through a tunnel as a proxy or auth server.
 		if identity.ID.Role == teleport.RoleAuth || identity.ID.Role == teleport.RoleProxy {
 			return nil, trace.Wrap(err)
 		}
 
-		process.log.Debugf("Attempting to connect to Auth Server through tunnel.")
-		tunnelClient, err := process.newClientThroughTunnel(authServers, identity)
+		process.log.Debug("Attempting to connect to Auth Server through tunnel.")
+		// Discover address of SSH reverse tunnel server.
+		proxyAddr, err := process.findReverseTunnel(authServers)
 		if err != nil {
 			return nil, trace.Wrap(err)
+		}
+
+		tunnelClient, err := process.newClientThroughTunnel(proxyAddr, identity)
+		if err != nil {
+			process.log.WithError(err).Warn("Failed to connect to Auth Server through tunnel.")
+			// See https://github.com/gravitational/teleport/issues/4141 for context.
+			proxyAddr = authServers[0].String()
+			process.log.WithField("proxy-addr", proxyAddr).Infof("Falling back to configured proxy address as the reverse tunnel address. "+
+				"This will only work if you are multiplexing web UI and reverse tunnel service on the same port (%v and %v by default)!",
+				defaults.HTTPListenPort, defaults.SSHProxyTunnelListenPort)
+			return process.newClientThroughTunnel(proxyAddr, identity)
 		}
 
 		process.log.Debugf("Connected to Auth Server through tunnel.")
@@ -817,6 +833,7 @@ func (process *TeleportProcess) newClient(authServers []utils.NetAddr, identity 
 // findReverseTunnel uses the web proxy to discover where the SSH reverse tunnel
 // server is running.
 func (process *TeleportProcess) findReverseTunnel(addrs []utils.NetAddr) (string, error) {
+	process.log.Info("Look for reverse tunnel.")
 	var errs []error
 	for _, addr := range addrs {
 		// In insecure mode, any certificate is accepted. In secure mode the hosts
@@ -825,6 +842,7 @@ func (process *TeleportProcess) findReverseTunnel(addrs []utils.NetAddr) (string
 			addr.String(),
 			lib.IsInsecureDevMode(),
 			nil)
+		process.log.WithError(err).Infof("Look for reverse tunnel: %v.", resp)
 		if err == nil {
 			return tunnelAddr(resp.Proxy)
 		}
@@ -873,14 +891,9 @@ func tunnelAddr(settings client.ProxySettings) (string, error) {
 	return settings.SSH.TunnelListenAddr, nil
 }
 
-func (process *TeleportProcess) newClientThroughTunnel(servers []utils.NetAddr, identity *auth.Identity) (*auth.Client, error) {
-	// Discover address of SSH reverse tunnel server.
-	proxyAddr, err := process.findReverseTunnel(servers)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	process.log.Debugf("Discovered address for reverse tunnel server: %v.", proxyAddr)
-
+func (process *TeleportProcess) newClientThroughTunnel(proxyAddr string, identity *auth.Identity) (*auth.Client, error) {
+	// FIXME(dmitri): remove
+	process.log.Debugf("New client through tunnel at %v.", proxyAddr)
 	tlsConfig, err := identity.TLSConfig(process.Config.CipherSuites)
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -914,18 +927,14 @@ func (process *TeleportProcess) newClientDirect(authServers []utils.NetAddr, ide
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
+	var opts []roundtrip.ClientParam
 	if process.Config.ClientTimeout != 0 {
-		return auth.NewClient(apiclient.Config{
-			Addrs: utils.NetAddrsToStrings(authServers),
-			Credentials: []apiclient.Credentials{
-				apiclient.LoadTLS(tlsConfig),
-			},
-		}, auth.ClientTimeout(process.Config.ClientTimeout))
+		opts = append(opts, auth.ClientTimeout(process.Config.ClientTimeout))
 	}
 	return auth.NewClient(apiclient.Config{
 		Addrs: utils.NetAddrsToStrings(authServers),
 		Credentials: []apiclient.Credentials{
 			apiclient.LoadTLS(tlsConfig),
 		},
-	})
+	}, opts...)
 }

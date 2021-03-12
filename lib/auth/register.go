@@ -19,6 +19,7 @@ package auth
 import (
 	"context"
 	"crypto/x509"
+	"fmt"
 
 	"github.com/gravitational/teleport"
 	"github.com/gravitational/teleport/api/client"
@@ -104,6 +105,11 @@ func (r *RegisterParams) setDefaults() {
 	}
 }
 
+func (r RegisterParams) String() string {
+	return fmt.Sprintf("RegisterParams(dir=%v,token=%v,ID=%v,servers=%s,principals=%s,dns_names=%s,ca_pin=%s,ca_path=%s)",
+		r.DataDir, r.Token, r.ID, r.Servers, r.AdditionalPrincipals, r.DNSNames, r.CAPin, r.CAPath)
+}
+
 // CredGetter is an interface for a client that can be used to get host
 // credentials. This interface is needed because lib/client can not be imported
 // in lib/auth due to circular imports.
@@ -146,10 +152,10 @@ func Register(params RegisterParams) (*Identity, error) {
 		ident, err := method.call(token, params)
 		if err != nil {
 			collectedErrs = append(collectedErrs, err)
-			log.WithError(err).Debugf("Registration %s failed.", method.desc)
+			log.WithError(err).Debugf("Registration %s with %v failed.", method.desc, params)
 			continue
 		}
-		log.Infof("Successfully registered %s.", method.desc)
+		log.Infof("Successfully registered %s with %v.", method.desc, params)
 		return ident, nil
 	}
 	return nil, trace.NewAggregate(collectedErrs...)

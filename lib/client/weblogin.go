@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/gravitational/teleport"
@@ -145,6 +146,11 @@ type CreateSSHCertWithMFAReq struct {
 	KubernetesCluster string
 }
 
+func (r PingResponse) String() string {
+	return fmt.Sprintf("PingResponse(%v,%v,server_version=%v,min_client_version=%v)",
+		r.Auth, r.Proxy, r.ServerVersion, r.MinClientVersion)
+}
+
 // PingResponse contains data about the Teleport server like supported
 // authentication types, server version, etc.
 type PingResponse struct {
@@ -217,6 +223,10 @@ type SSHLoginMFA struct {
 	Password string
 }
 
+func (r ProxySettings) String() string {
+	return fmt.Sprintf("ProxySettings(%v,%v,%v)", r.Kube, r.SSH, r.DB)
+}
+
 // ProxySettings contains basic information about proxy settings
 type ProxySettings struct {
 	// Kube is a kubernetes specific proxy section
@@ -225,6 +235,11 @@ type ProxySettings struct {
 	SSH SSHProxySettings `json:"ssh"`
 	// DB contains database access specific proxy settings
 	DB DBProxySettings `json:"db"`
+}
+
+func (r KubeProxySettings) String() string {
+	return fmt.Sprintf("KubeProxySettings(enabled=%v,public_addr=%v,listen_addr=%v)",
+		strconv.FormatBool(r.Enabled), r.PublicAddr, r.ListenAddr)
 }
 
 // KubeProxySettings is kubernetes proxy settings
@@ -236,6 +251,11 @@ type KubeProxySettings struct {
 	// ListenAddr is the address that the kubernetes proxy is listening for
 	// connections on.
 	ListenAddr string `json:"listen_addr,omitempty"`
+}
+
+func (r SSHProxySettings) String() string {
+	return fmt.Sprintf("SSHProxySettings(listen_addr=%v,tunnel_listen_addr=%v,public_addr=%v,ssh_public_addr=%v,tunnel_public_addr=%v)",
+		r.ListenAddr, r.TunnelListenAddr, r.PublicAddr, r.SSHPublicAddr, r.TunnelPublicAddr)
 }
 
 // SSHProxySettings is SSH specific proxy settings.
@@ -257,10 +277,18 @@ type SSHProxySettings struct {
 	TunnelPublicAddr string `json:"ssh_tunnel_public_addr,omitempty"`
 }
 
+func (r DBProxySettings) String() string {
+	return fmt.Sprintf("DBProxySettings(mysql_listen_addr=%v)", r.MySQLListenAddr)
+}
+
 // DBProxySettings contains database access specific proxy settings.
 type DBProxySettings struct {
 	// MySQLListenAddr is MySQL proxy listen address.
 	MySQLListenAddr string `json:"mysql_listen_addr,omitempty"`
+}
+
+func (r AuthenticationSettings) String() string {
+	return fmt.Sprintf("AuthSettings(type=%v,2fa=%v)", r.Type, r.SecondFactor)
 }
 
 // PingResponse contains the form of authentication the auth server supports.
