@@ -185,6 +185,9 @@ func (m *Metadata) Expiry() time.Time {
 
 // Origin returns the origin value of the resource.
 func (m *Metadata) Origin() string {
+	if m.Labels == nil {
+		return ""
+	}
 	return m.Labels[OriginLabel]
 }
 
