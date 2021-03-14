@@ -137,7 +137,6 @@ func TestLoadProfile(t *testing.T) {
 	name := "proxy"
 	p := &Profile{
 		WebProxyAddr: "proxy:3080",
-		SSHProxyAddr: "proxy:3024",
 		Username:     "testUser",
 		Dir:          dir,
 	}
@@ -162,10 +161,10 @@ func TestLoadProfile(t *testing.T) {
 	tlsCasPath := filepath.Join(userKeyDir, constants.FileNameTLSCerts)
 	err = ioutil.WriteFile(tlsCasPath, []byte(tlsCACert), 0600)
 	require.NoError(t, err)
-	sshCertPath := filepath.Join(userKeyDir, p.Username+constants.FileExtCert)
+	sshCertPath := filepath.Join(userKeyDir, p.Username+constants.FileExtSSHCert)
 	err = ioutil.WriteFile(sshCertPath, []byte(sshCert), 0600)
 	require.NoError(t, err)
-	sshCasPath := filepath.Join(userKeyDir, p.Username+constants.FileExtPub)
+	sshCasPath := filepath.Join(dir, constants.FileNameKnownHosts)
 	err = ioutil.WriteFile(sshCasPath, []byte(sshCACert), 0600)
 	require.NoError(t, err)
 
@@ -180,12 +179,17 @@ func TestLoadProfile(t *testing.T) {
 	sshConfig, err := creds.SSHClientConfig()
 	require.NoError(t, err)
 	require.Equal(t, sshConfig.User, expectedSSHConfig.User)
+	// Build Dialer
+	_, err = creds.Dialer(0, 0)
+	require.NoError(t, err)
 
 	// Load invalid profile.
 	creds = LoadProfile("invalid_dir", "invalid_name")
 	_, err = creds.TLSConfig()
 	require.Error(t, err)
 	_, err = creds.SSHClientConfig()
+	require.Error(t, err)
+	_, err = creds.Dialer(0, 0)
 	require.Error(t, err)
 }
 

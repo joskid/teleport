@@ -28,10 +28,9 @@ import (
 
 	"github.com/gravitational/teleport/api/constants"
 	"github.com/gravitational/teleport/api/sshutils"
-	"golang.org/x/crypto/ssh"
 
 	"github.com/gravitational/trace"
-
+	"golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v2"
 )
 
@@ -123,7 +122,7 @@ func (p *Profile) TLSConfig() (*tls.Config, error) {
 // SSHClientConfig returns the profile's associated SSHClientConfig.
 func (p *Profile) SSHClientConfig() (*ssh.ClientConfig, error) {
 	credsPath := filepath.Join(p.Dir, constants.SessionKeyDir, p.Name())
-	cert, err := ioutil.ReadFile(filepath.Join(credsPath, p.Username+constants.FileExtCert))
+	cert, err := ioutil.ReadFile(filepath.Join(credsPath, p.Username+constants.FileExtSSHCert))
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -131,12 +130,13 @@ func (p *Profile) SSHClientConfig() (*ssh.ClientConfig, error) {
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
-	cas, err := ioutil.ReadFile(filepath.Join(credsPath, p.Username+constants.FileExtPub))
+
+	knownHosts, err := ioutil.ReadFile(filepath.Join(p.Dir, constants.FileNameKnownHosts))
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
 
-	ssh, err := sshutils.SSHClientConfig(cert, key, [][]byte{cas})
+	ssh, err := sshutils.SSHClientConfig(cert, key, [][]byte{knownHosts})
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -234,11 +234,11 @@ func ProfileFromDir(dir string, name string) (*Profile, error) {
 			return nil, trace.Wrap(err)
 		}
 	}
-	cp, err := profileFromFile(filepath.Join(dir, name+".yaml"))
+	p, err := profileFromFile(filepath.Join(dir, name+".yaml"))
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
-	return cp, nil
+	return p, nil
 }
 
 // profileFromFile loads the profile from a YAML file.
@@ -247,12 +247,12 @@ func profileFromFile(filePath string) (*Profile, error) {
 	if err != nil {
 		return nil, trace.ConvertSystemError(err)
 	}
-	var cp *Profile
-	if err := yaml.Unmarshal(bytes, &cp); err != nil {
+	var p *Profile
+	if err := yaml.Unmarshal(bytes, &p); err != nil {
 		return nil, trace.Wrap(err)
 	}
-	cp.Dir = filepath.Dir(filePath)
-	return cp, nil
+	p.Dir = filepath.Dir(filePath)
+	return p, nil
 }
 
 // SaveToDir saves this profile to the specified directory.

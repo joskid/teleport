@@ -17,9 +17,11 @@ limitations under the License.
 package client
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"io/ioutil"
+	"net"
 	"time"
 
 	"github.com/gravitational/teleport/api/constants"
@@ -197,7 +199,21 @@ func (c *ProfileCreds) Dialer(keepAliveInterval, dialTimeout time.Duration) (Con
 		return nil, trace.Wrap(err)
 	}
 
-	return NewTunnelDialer(*sshConfig, keepAliveInterval, dialTimeout), nil
+	dialer := NewTunnelDialer(*sshConfig, keepAliveInterval, dialTimeout)
+	return ContextDialerFunc(func(ctx context.Context, network, _ string) (conn net.Conn, err error) {
+		// Ping web proxy to retrieve tunnel proxy address.
+		pr, err := Ping(ctx, profile.WebProxyAddr)
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+
+		conn, err = dialer.DialContext(ctx, network, pr.Proxy.SSH.TunnelPublicAddr)
+		if err == nil {
+			return conn, nil
+		}
+		// not wrapping on purpose to preserve the original error
+		return nil, err
+	}), nil
 }
 
 // TLSConfig returns TLS configuration used to connect to Auth.

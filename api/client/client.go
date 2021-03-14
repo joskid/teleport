@@ -200,6 +200,8 @@ func connect(ctx context.Context, cfg Config) (*Client, error) {
 					tlsConfig: tlsConfig,
 					dialer:    dialer,
 				})
+			} else if !trace.IsNotImplemented(err) {
+				sendError(trace.Wrap(err))
 			}
 
 			for _, addr := range cfg.Addrs {

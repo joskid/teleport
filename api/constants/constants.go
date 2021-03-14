@@ -123,6 +123,8 @@ const (
 const (
 	// SessionKeyDir is the sub-directory where session keys are stored (.tsh/keys).
 	SessionKeyDir = "keys"
+	// FileNameKnownHosts is a file that stores known hosts.
+	FileNameKnownHosts = "known_hosts"
 	// FileExtTLSCert is the filename extension/suffix of TLS certs
 	// stored in a profile (./tsh/keys/profilename/username-x509.pem).
 	FileExtTLSCert = "-x509.pem"

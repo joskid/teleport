@@ -42,10 +42,8 @@ import (
 )
 
 const (
-	fileNameKnownHosts = "known_hosts"
-	fileNameTLSCerts   = constants.FileNameTLSCerts
-	kubeDirSuffix      = "-kube"
-	dbDirSuffix        = "-db"
+	kubeDirSuffix = "-kube"
+	dbDirSuffix   = "-db"
 
 	// profileDirPerms is the default permissions applied to the profile
 	// directory (usually ~/.tsh)
@@ -453,7 +451,7 @@ func (fs *FSLocalKeyStore) SaveCerts(proxy string, cas []auth.TrustedCerts) (ret
 	if err != nil {
 		return trace.Wrap(err)
 	}
-	fp, err := os.OpenFile(filepath.Join(dir, fileNameTLSCerts), os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0640)
+	fp, err := os.OpenFile(filepath.Join(dir, constants.FileNameTLSCerts), os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0640)
 	if err != nil {
 		return trace.ConvertSystemError(err)
 	}
@@ -478,7 +476,7 @@ func (fs *FSLocalKeyStore) GetCertsPEM(proxy string) ([][]byte, error) {
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
-	data, err := ioutil.ReadFile(filepath.Join(dir, fileNameTLSCerts))
+	data, err := ioutil.ReadFile(filepath.Join(dir, constants.FileNameTLSCerts))
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -527,7 +525,7 @@ func (fs *FSLocalKeyStore) GetCerts(proxy string) (*x509.CertPool, error) {
 
 // AddKnownHostKeys adds a new entry to 'known_hosts' file
 func (fs *FSLocalKeyStore) AddKnownHostKeys(hostname string, hostKeys []ssh.PublicKey) (retErr error) {
-	fp, err := os.OpenFile(filepath.Join(fs.KeyDir, fileNameKnownHosts), os.O_CREATE|os.O_RDWR, 0640)
+	fp, err := os.OpenFile(filepath.Join(fs.KeyDir, constants.FileNameKnownHosts), os.O_CREATE|os.O_RDWR, 0640)
 	if err != nil {
 		return trace.ConvertSystemError(err)
 	}
@@ -568,7 +566,7 @@ func (fs *FSLocalKeyStore) AddKnownHostKeys(hostname string, hostKeys []ssh.Publ
 
 // GetKnownHostKeys returns all known public keys from 'known_hosts'
 func (fs *FSLocalKeyStore) GetKnownHostKeys(hostname string) ([]ssh.PublicKey, error) {
-	bytes, err := ioutil.ReadFile(filepath.Join(fs.KeyDir, fileNameKnownHosts))
+	bytes, err := ioutil.ReadFile(filepath.Join(fs.KeyDir, constants.FileNameKnownHosts))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil

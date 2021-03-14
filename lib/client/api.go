@@ -362,7 +362,7 @@ func (p *ProfileStatus) IsExpired(clock clockwork.Clock) bool {
 //
 // It's stored in ~/.tsh/keys/<proxy>/certs.pem by default.
 func (p *ProfileStatus) CACertPath() string {
-	return filepath.Join(p.Dir, constants.SessionKeyDir, p.Name, fileNameTLSCerts)
+	return filepath.Join(p.Dir, constants.SessionKeyDir, p.Name, constants.FileNameTLSCerts)
 }
 
 // KeyPath returns path to the private key for this profile.
