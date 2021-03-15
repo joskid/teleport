@@ -833,7 +833,6 @@ func (process *TeleportProcess) newClient(authServers []utils.NetAddr, identity 
 // findReverseTunnel uses the web proxy to discover where the SSH reverse tunnel
 // server is running.
 func (process *TeleportProcess) findReverseTunnel(addrs []utils.NetAddr) (string, error) {
-	process.log.Info("Look for reverse tunnel.")
 	var errs []error
 	for _, addr := range addrs {
 		// In insecure mode, any certificate is accepted. In secure mode the hosts

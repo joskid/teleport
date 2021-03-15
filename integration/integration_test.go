@@ -20,6 +20,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
@@ -28,6 +29,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/exec"
@@ -194,6 +196,7 @@ func (s *IntSuite) newTeleportIoT(c *check.C, logins []string) *TeleInstance {
 		tconf.Proxy.Enabled = true
 		tconf.Proxy.DisableWebService = false
 		tconf.Proxy.DisableWebInterface = true
+		tconf.Proxy.DisableDatabaseProxy = true
 
 		tconf.SSH.Enabled = false
 
@@ -774,7 +777,7 @@ func (s *IntSuite) TestInteractiveRegular(c *check.C) {
 	s.verifySessionJoin(c, t)
 }
 
-// TestInteractive covers SSH into shell and joining the same session from another client
+// TestInteractiveReverseTunnel covers SSH into shell and joining the same session from another client
 // against a reversetunnel node.
 func (s *IntSuite) TestInteractiveReverseTunnel(c *check.C) {
 	s.setUpTest(c)
@@ -791,6 +794,187 @@ func (s *IntSuite) TestInteractiveReverseTunnel(c *check.C) {
 	defer t.StopAll()
 
 	s.verifySessionJoin(c, t)
+}
+
+// TestCustomReverseTunnel tests that the SSH node falls back to configured
+// proxy address if it cannot connect via the proxy address from the reverse
+// tunnel discovery query.
+// See https://github.com/gravitational/teleport/issues/4141 for context.
+func (s *IntSuite) TestCustomReverseTunnel(c *check.C) {
+	s.setUpTest(c)
+	defer s.tearDownTest(c)
+
+	tr := utils.NewTracer(utils.ThisFunction()).Start()
+	defer tr.Stop()
+
+	// InsecureDevMode needed for IoT node handshake
+	lib.SetInsecureDevMode(true)
+	defer lib.SetInsecureDevMode(false)
+
+	// Create a Teleport instance with Auth/Proxy.
+	conf := s.defaultServiceConfig()
+	conf.Auth.Enabled = true
+	conf.Proxy.Enabled = true
+	conf.Proxy.DisableWebService = false
+	conf.Proxy.DisableWebInterface = true
+	conf.Proxy.DisableDatabaseProxy = true
+	conf.SSH.Enabled = false
+	main := s.newTeleportWithConfig(c, nil, nil, conf)
+	defer main.StopAll()
+
+	proxyAddr := net.JoinHostPort(Loopback, main.GetPortWeb())
+
+	proxyURL := &url.URL{
+		Scheme: "https",
+		Host:   proxyAddr,
+	}
+
+	proxyHandler := httputil.NewSingleHostReverseProxy(proxyURL)
+	proxyHandler.Transport = &http.Transport{DialTLS: dialTLS}
+	// proxyHandler.Transport = customTunnelRoundTripper("localhost:443")
+	proxyHandler.ModifyResponse = customTunnelResponse("localhost:443")
+
+	director := proxyHandler.Director
+	proxyHandler.Director = func(req *http.Request) {
+		director(req)
+		fmt.Println("Director:RoundTrip:", req.Method, req.URL.String())
+	}
+
+	tunnel := httptest.NewUnstartedServer(proxyHandler)
+	tunnel.TLS = &tls.Config{InsecureSkipVerify: true, ClientAuth: tls.NoClientCert}
+	tunnel.StartTLS()
+	defer tunnel.Close()
+	tunnelAddr, err := url.Parse(tunnel.URL)
+	c.Assert(err, check.IsNil)
+
+	// Create a Teleport instance with a Node.
+	nodeConf := s.defaultServiceConfig()
+	nodeConf.Hostname = Host
+	nodeConf.Token = "token"
+	nodeConf.AuthServers = []utils.NetAddr{
+		{
+			AddrNetwork: "tcp",
+			// Custom reverse tunnel configuration
+			Addr: tunnelAddr.Host,
+		},
+	}
+	nodeConf.Auth.Enabled = false
+	nodeConf.Proxy.Enabled = false
+	nodeConf.SSH.Enabled = true
+	_, err = main.StartReverseTunnelNode(nodeConf)
+	c.Assert(err, check.IsNil)
+
+	fmt.Printf("Started Node: %v\n", nodeConf.AuthServers)
+
+	// t := s.newTeleportIoTWithCustomTunnel(c, tunnelAddr.Host)
+	// defer t.StopAll()
+
+	// TODO(dmitri): verify
+}
+
+type repsonseModifierFunc func(*http.Response) error
+
+func customTunnelResponse(discoveryTunnelAddr string) repsonseModifierFunc {
+	return func(resp *http.Response) error {
+		if resp.Request.URL.Path != "/v1/webapi/find" {
+			return nil
+		}
+		respBytes, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+		if err := resp.Body.Close(); err != nil {
+			return err
+		}
+		var pingResp client.PingResponse
+		if err := json.Unmarshal(respBytes, &pingResp); err != nil {
+			return err
+		}
+		fmt.Println("Custom ModifyResponse:resp(0):", pingResp)
+		// Modify find query response with the given tunnel address
+		pingResp.Proxy.SSH.TunnelListenAddr = discoveryTunnelAddr
+		fmt.Printf("Custom ModifyResponse:resp(1): %v (%T)", pingResp, resp.Body)
+		// pingResp := client.PingResponse{
+		// 	Proxy: client.ProxySettings{
+		// 		SSH: client.SSHProxySettings{
+		// 			TunnelListenAddr: discoveryTunnelAddr,
+		// 		},
+		// 	},
+		// 	ServerVersion:    teleport.Version,
+		// 	MinClientVersion: teleport.MinClientVersion,
+		// }
+		respBytes, err = json.Marshal(pingResp)
+		if err != nil {
+			return err
+		}
+		resp.Body = ioutil.NopCloser(bytes.NewReader(respBytes))
+		resp.ContentLength = int64(len(respBytes))
+		resp.Header.Set("Content-Length", strconv.Itoa(len(respBytes)))
+		return nil
+	}
+}
+
+func (r roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return r(req)
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func customTunnelRoundTripper(discoveryTunnelAddr string) http.RoundTripper {
+	transport := &http.Transport{DialTLS: dialTLS}
+	return roundTripperFunc(func(req *http.Request) (resp *http.Response, err error) {
+		fmt.Println("Custom RoundTripper:", req.URL.Path)
+		resp, err = transport.RoundTrip(req)
+		if err != nil {
+			return nil, err
+		}
+		if req.URL.Path != "/v1/webapi/find" {
+			return resp, nil
+		}
+		respBytes, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+		var pingResp client.PingResponse
+		if err := json.Unmarshal(respBytes, &pingResp); err != nil {
+			return nil, trace.Wrap(err)
+		}
+		fmt.Println("Custom RoundTripper:resp(0):", pingResp)
+		// Modify find query response with the given tunnel address
+		pingResp.Proxy.SSH.TunnelListenAddr = discoveryTunnelAddr
+		fmt.Printf("Custom RoundTripper:resp(1): %v (%T)", pingResp, resp.Body)
+		// pingResp := client.PingResponse{
+		// 	Proxy: client.ProxySettings{
+		// 		SSH: client.SSHProxySettings{
+		// 			TunnelListenAddr: discoveryTunnelAddr,
+		// 		},
+		// 	},
+		// 	ServerVersion:    teleport.Version,
+		// 	MinClientVersion: teleport.MinClientVersion,
+		// }
+		respBytes, err = json.Marshal(pingResp)
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+		resp.Body.Close()
+		resp.Body = ioutil.NopCloser(bytes.NewReader(respBytes))
+		resp.ContentLength = int64(len(respBytes))
+		return resp, nil
+	})
+}
+
+func dialTLS(network, addr string) (net.Conn, error) {
+	conn, err := net.Dial(network, addr)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	cfg := &tls.Config{InsecureSkipVerify: true}
+	tlsConn := tls.Client(conn, cfg)
+	if err := tlsConn.Handshake(); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return tlsConn, nil
 }
 
 // verifySessionJoin covers SSH into shell and joining the same session from another client
