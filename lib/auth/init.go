@@ -511,15 +511,18 @@ func setAuthPreference(asrv *Server, newAuthPref services.AuthPreference) error 
 // in rfd/0016-dynamic-configuration.md
 func shouldInitReplaceResource(stored, candidate types.ResourceWithOrigin) (bool, error) {
 	if candidate.Origin() != types.OriginConfigFile && candidate.Origin() != types.OriginDefaults {
-		return false, trace.BadParameter("candidate origin must be either config file or defaults (this is a bug)")
+		return false, trace.BadParameter("candidate origin must be either config-file or defaults (this is a bug)")
+	}
+	if stored == nil || stored.Origin() == types.OriginConfigFile || stored.Origin() == types.OriginDefaults {
+		return true, nil
 	}
 	if candidate.Origin() == types.OriginConfigFile {
+		// Log a warning when about to overwrite a dynamically configured resource.
+		log.Warnf("Stored %v resource with origin %q is to be discarded in favor of resource with origin %q.",
+			stored.GetKind(), stored.Origin(), candidate.Origin())
 		return true, nil
 	}
-	if stored == nil {
-		return true, nil
-	}
-	return stored.Origin() == types.OriginConfigFile || stored.Origin() == types.OriginDefaults, nil
+	return false, nil
 }
 
 func migrateLegacyResources(ctx context.Context, cfg InitConfig, asrv *Server) error {
