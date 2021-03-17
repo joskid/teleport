@@ -111,7 +111,6 @@ export
 #            a web UI.
 .PHONY: all
 all: $(VERSRC)
-	@echo GOPKGDIR: $(GOPKGDIR)
 	@echo "---> Building OSS binaries."
 	$(MAKE) $(BINARIES)
 

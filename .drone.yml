@@ -345,7 +345,7 @@ type: kubernetes
 name: push-build-linux-amd64
 
 environment:
-  RUNTIME: go1.15.5
+  RUNTIME: go1.16.2
   UID: 1000
   GID: 1000
 
@@ -442,7 +442,7 @@ type: kubernetes
 name: push-build-linux-386
 
 environment:
-  RUNTIME: go1.15.5
+  RUNTIME: go1.16.2
   UID: 1000
   GID: 1000
 
@@ -539,7 +539,7 @@ type: kubernetes
 name: push-build-linux-amd64-fips
 
 environment:
-  RUNTIME: go1.15.5
+  RUNTIME: go1.16.2
   UID: 1000
   GID: 1000
 
@@ -640,7 +640,7 @@ type: kubernetes
 name: push-build-windows-amd64
 
 environment:
-  RUNTIME: go1.15.5
+  RUNTIME: go1.16.2
   UID: 1000
   GID: 1000
 
@@ -843,10 +843,15 @@ platform:
 
 trigger:
   event:
-    include:
-      - push
+    #FIXME(dmitri): debugging
     exclude:
+      - push
+    include:
       - pull_request
+    #include:
+    #  - push
+    #exclude:
+    #  - pull_request
   branch:
     include:
       - master
@@ -878,7 +883,7 @@ steps:
       WORKSPACE_DIR: /tmp/push-build-darwin-amd64-fips
       TELEPORT_DIR: /tmp/push-build-darwin-amd64-fips/go/src/github.com/gravitational/teleport
       GODL_DIR: /tmp/push-build-darwin-amd64-fips/go/src/github.com/gravitational/godl
-      BORINGCRYPTO_BRANCH: dev.boringcrypto.go1.15
+      BORINGCRYPTO_BRANCH: dev.boringcrypto.go1.16
     commands:
       - set -u
       - mkdir -p $TELEPORT_DIR $GODL_DIR
@@ -924,12 +929,12 @@ steps:
       AWS_SECRET_ACCESS_KEY:
         from_secret: AWS_SECRET_ACCESS_KEY
       AWS_REGION: us-west-2
-      BORINGCRYPTO_BRANCH: dev.boringcrypto.go1.15
       GODL_DIR: /tmp/push-build-darwin-amd64-fips/go/src/github.com/gravitational/godl
     commands:
       - set -u
-      - mkdir -p $HOME/sdk/dev.boringcrypto.go1.15
-      - cd $HOME/sdk/dev.boringcrypto.go1.15
+      - export BORINGCRYPTO_BRANCH=$(cat $WORKSPACE_DIR/go/.bc_commit.txt)
+      - mkdir -p $HOME/sdk/$BORINGCRYPTO_BRANCH
+      - cd $HOME/sdk/$BORINGCRYPTO_BRANCH
       - aws s3 cp s3://$AWS_S3_BUCKET/ci/go/$BORINGCRYPTO_BRANCH-darwin-amd64.tar.gz .
       - aws s3 cp s3://$AWS_S3_BUCKET/ci/go/$BORINGCRYPTO_BRANCH-darwin-amd64.tar.gz.sha256 .
       - $GODL_DIR/build/$BORINGCRYPTO_BRANCH download
@@ -959,18 +964,18 @@ steps:
       - chmod -R u+rw $WORKSPACE_DIR
       - rm -rf $WORKSPACE_DIR/go $WORKSPACE_DIR/.ssh
 
-  - name: Send Slack notification (exec)
-    environment:
-      SLACK_WEBHOOK:
-        from_secret: SLACK_WEBHOOK_DEV_TELEPORT
-    commands:
-      - |
-        export DRONE_BUILD_LINK="${DRONE_SYSTEM_PROTO}://${DRONE_SYSTEM_HOSTNAME}/${DRONE_REPO_OWNER}/${DRONE_REPO_NAME}/${DRONE_BUILD_NUMBER}"
-        export GOOS=$(go env GOOS)
-        export GOARCH=$(go env GOARCH)
-        curl -sL -X POST -H 'Content-type: application/json' --data "{\"text\":\"Warning: \`$GOOS-$GOARCH\` FIPS artifact build failed for [\`${DRONE_REPO_NAME}\`] - please investigate immediately!\nBranch: \`${DRONE_BRANCH}\`\nCommit: \`${DRONE_COMMIT_SHA}\`\nLink: $DRONE_BUILD_LINK\"}" $SLACK_WEBHOOK
-    when:
-      status: [failure]
+  #- name: Send Slack notification (exec)
+  #  environment:
+  #    SLACK_WEBHOOK:
+  #      from_secret: SLACK_WEBHOOK_DEV_TELEPORT
+  #  commands:
+  #    - |
+  #      export DRONE_BUILD_LINK="${DRONE_SYSTEM_PROTO}://${DRONE_SYSTEM_HOSTNAME}/${DRONE_REPO_OWNER}/${DRONE_REPO_NAME}/${DRONE_BUILD_NUMBER}"
+  #      export GOOS=$(go env GOOS)
+  #      export GOARCH=$(go env GOARCH)
+  #      curl -sL -X POST -H 'Content-type: application/json' --data "{\"text\":\"Warning: \`$GOOS-$GOARCH\` FIPS artifact build failed for [\`${DRONE_REPO_NAME}\`] - please investigate immediately!\nBranch: \`${DRONE_BRANCH}\`\nCommit: \`${DRONE_COMMIT_SHA}\`\nLink: $DRONE_BUILD_LINK\"}" $SLACK_WEBHOOK
+  #  when:
+  #    status: [failure]
 
 ---
 kind: pipeline
@@ -978,7 +983,7 @@ type: kubernetes
 name: push-build-linux-arm
 
 environment:
-  RUNTIME: go1.15.5
+  RUNTIME: go1.16.2
   UID: 1000
   GID: 1000
 
@@ -1076,7 +1081,7 @@ type: kubernetes
 name: push-build-linux-arm-fips
 
 environment:
-  RUNTIME: go1.15.5
+  RUNTIME: go1.16.2
   UID: 1000
   GID: 1000
 
@@ -1177,7 +1182,7 @@ type: kubernetes
 name: push-build-linux-arm64
 
 environment:
-  RUNTIME: go1.15.5
+  RUNTIME: go1.16.2
   UID: 1000
   GID: 1000
 
@@ -1275,7 +1280,7 @@ type: kubernetes
 name: push-build-linux-arm64-fips
 
 environment:
-  RUNTIME: go1.15.5
+  RUNTIME: go1.16.2
   UID: 1000
   GID: 1000
 
@@ -1607,7 +1612,7 @@ type: kubernetes
 name: build-linux-amd64
 
 environment:
-  RUNTIME: go1.15.5
+  RUNTIME: go1.16.2
 
 trigger:
   event:
@@ -1707,7 +1712,7 @@ type: kubernetes
 name: build-linux-amd64-fips
 
 environment:
-  RUNTIME: go1.15.5
+  RUNTIME: go1.16.2
 
 trigger:
   event:
@@ -1808,7 +1813,7 @@ type: kubernetes
 name: build-linux-amd64-centos6
 
 environment:
-  RUNTIME: go1.15.5
+  RUNTIME: go1.16.2
 
 trigger:
   event:
@@ -1912,7 +1917,7 @@ type: kubernetes
 name: build-linux-amd64-centos6-fips
 
 environment:
-  RUNTIME: go1.15.5
+  RUNTIME: go1.16.2
 
 trigger:
   event:
@@ -2495,7 +2500,7 @@ type: kubernetes
 name: build-linux-386
 
 environment:
-  RUNTIME: go1.15.5
+  RUNTIME: go1.16.2
 
 trigger:
   event:
@@ -2950,8 +2955,11 @@ platform:
   arch: amd64
 
 trigger:
+  #FIXME(dmitri): debugging
   event:
-    - tag
+    - pull_request
+  #event:
+  #  - tag
   ref:
     include:
       - refs/tags/v*
@@ -2982,7 +2990,7 @@ steps:
       WORKSPACE_DIR: /tmp/build-darwin-amd64-fips
       TELEPORT_DIR: /tmp/build-darwin-amd64-fips/go/src/github.com/gravitational/teleport
       GODL_DIR: /tmp/build-darwin-amd64-fips/go/src/github.com/gravitational/godl
-      BORINGCRYPTO_BRANCH: dev.boringcrypto.go1.15
+      BORINGCRYPTO_BRANCH: dev.boringcrypto.go1.16
     commands:
       - set -u
       - mkdir -p $TELEPORT_DIR $GODL_DIR
@@ -3033,8 +3041,8 @@ steps:
     commands:
       - set -u
       - export BORINGCRYPTO_BRANCH=$(cat $WORKSPACE_DIR/go/.bc_commit.txt)
-      - mkdir -p $HOME/sdk/dev.boringcrypto.go1.15
-      - cd $HOME/sdk/dev.boringcrypto.go1.15
+      - mkdir -p $HOME/sdk/$BORINGCRYPTO_BRANCH
+      - cd $HOME/sdk/$BORINGCRYPTO_BRANCH
       - aws s3 cp s3://$AWS_S3_BUCKET/ci/go/$BORINGCRYPTO_BRANCH-darwin-amd64.tar.gz .
       - aws s3 cp s3://$AWS_S3_BUCKET/ci/go/$BORINGCRYPTO_BRANCH-darwin-amd64.tar.gz.sha256 .
       - $GODL_DIR/build/$BORINGCRYPTO_BRANCH download
@@ -3068,20 +3076,21 @@ steps:
       # generate checksums (for mac)
       - cd $WORKSPACE_DIR/go/artifacts && for FILE in teleport*.tar.gz; do shasum -a 256 $FILE > $FILE.sha256; done && ls -l
 
-  - name: Upload to S3
-    environment:
-      AWS_S3_BUCKET:
-        from_secret: AWS_S3_BUCKET
-      AWS_ACCESS_KEY_ID:
-        from_secret: AWS_ACCESS_KEY_ID
-      AWS_SECRET_ACCESS_KEY:
-        from_secret: AWS_SECRET_ACCESS_KEY
-      AWS_REGION: us-west-2
-      WORKSPACE_DIR: /tmp/build-darwin-amd64-fips
-    commands:
-      - set -u
-      - cd $WORKSPACE_DIR/go/artifacts
-      - aws s3 sync . s3://$AWS_S3_BUCKET/teleport/tag/${DRONE_TAG##v}
+  #FIXME(dmitri): debugging
+  #- name: Upload to S3
+  #  environment:
+  #    AWS_S3_BUCKET:
+  #      from_secret: AWS_S3_BUCKET
+  #    AWS_ACCESS_KEY_ID:
+  #      from_secret: AWS_ACCESS_KEY_ID
+  #    AWS_SECRET_ACCESS_KEY:
+  #      from_secret: AWS_SECRET_ACCESS_KEY
+  #    AWS_REGION: us-west-2
+  #    WORKSPACE_DIR: /tmp/build-darwin-amd64-fips
+  #  commands:
+  #    - set -u
+  #    - cd $WORKSPACE_DIR/go/artifacts
+  #    - aws s3 sync . s3://$AWS_S3_BUCKET/teleport/tag/${DRONE_TAG##v}
 
   - name: Clean up exec runner storage (post)
     environment:
@@ -3104,8 +3113,11 @@ platform:
   arch: amd64
 
 trigger:
+  #FIXME(dmitri): debugging
   event:
-    - tag
+    - pull_request
+  #event:
+  #  - tag
   ref:
     include:
       - refs/tags/v*
@@ -3202,20 +3214,21 @@ steps:
       # generate checksums (for mac)
       - cd $WORKSPACE_DIR/go/artifacts && for FILE in teleport*.pkg; do shasum -a 256 $FILE > $FILE.sha256; done && ls -l
 
-  - name: Upload to S3
-    environment:
-      AWS_S3_BUCKET:
-        from_secret: AWS_S3_BUCKET
-      AWS_ACCESS_KEY_ID:
-        from_secret: AWS_ACCESS_KEY_ID
-      AWS_SECRET_ACCESS_KEY:
-        from_secret: AWS_SECRET_ACCESS_KEY
-      AWS_REGION: us-west-2
-      WORKSPACE_DIR: /tmp/build-darwin-amd64-fips-pkg
-    commands:
-      - set -u
-      - cd $WORKSPACE_DIR/go/artifacts
-      - aws s3 sync . s3://$AWS_S3_BUCKET/teleport/tag/${DRONE_TAG##v}
+  #FIXME(dmitri): debugging
+  #- name: Upload to S3
+  #  environment:
+  #    AWS_S3_BUCKET:
+  #      from_secret: AWS_S3_BUCKET
+  #    AWS_ACCESS_KEY_ID:
+  #      from_secret: AWS_ACCESS_KEY_ID
+  #    AWS_SECRET_ACCESS_KEY:
+  #      from_secret: AWS_SECRET_ACCESS_KEY
+  #    AWS_REGION: us-west-2
+  #    WORKSPACE_DIR: /tmp/build-darwin-amd64-fips-pkg
+  #  commands:
+  #    - set -u
+  #    - cd $WORKSPACE_DIR/go/artifacts
+  #    - aws s3 sync . s3://$AWS_S3_BUCKET/teleport/tag/${DRONE_TAG##v}
 
   - name: Clean up exec runner storage
     environment:
@@ -3651,7 +3664,7 @@ type: kubernetes
 name: build-linux-arm
 
 environment:
-  RUNTIME: go1.15.5
+  RUNTIME: go1.16.2
 
 trigger:
   event:
@@ -3752,7 +3765,7 @@ type: kubernetes
 name: build-linux-arm64
 
 environment:
-  RUNTIME: go1.15.5
+  RUNTIME: go1.16.2
 
 trigger:
   event:
@@ -3853,7 +3866,7 @@ type: kubernetes
 name: build-linux-arm64-fips
 
 environment:
-  RUNTIME: go1.15.5
+  RUNTIME: go1.16.2
 
 trigger:
   event:
@@ -3955,7 +3968,7 @@ type: kubernetes
 name: build-windows-amd64
 
 environment:
-  RUNTIME: go1.15.5
+  RUNTIME: go1.16.2
 
 trigger:
   event:
@@ -4060,7 +4073,7 @@ type: kubernetes
 name: build-docker-images
 
 environment:
-  RUNTIME: go1.15.5
+  RUNTIME: go1.16.2
 
 trigger:
   event:
@@ -4373,7 +4386,7 @@ type: kubernetes
 name: build-buildboxes
 
 environment:
-  RUNTIME: go1.15.5
+  RUNTIME: go1.16.2
   UID: 1000
   GID: 1000
 
@@ -4824,6 +4837,6 @@ volumes:
 
 ---
 kind: signature
-hmac: 239293877a8d8b716ac474df0fa9cdd0c3b0a00ddd3fd8373f576d4e44f7870b
+hmac: ba1b81aea3cd427028abdd0c36389cb0ea51fc71bdca6d454975f184b5dbe10c
 
 ...
