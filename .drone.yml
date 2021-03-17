@@ -3175,14 +3175,12 @@ steps:
       - set -u
       - export VERSION=$(cat $WORKSPACE_DIR/go/.version.txt)
       - export S3_PATH="tag/$${DRONE_TAG##v}/"
-      - aws s3 cp s3://$AWS_S3_BUCKET/teleport/$${S3_PATH}teleport-v$${VERSION}-darwin-amd64-fips-bin.tar.gz $WORKSPACE_DIR/go/artifacts/
       - aws s3 cp s3://$AWS_S3_BUCKET/teleport/$${S3_PATH}teleport-ent-v$${VERSION}-darwin-amd64-fips-bin.tar.gz $WORKSPACE_DIR/go/artifacts/
 
   - name: Build Mac pkg release artifacts
     environment:
       OS: darwin
       ARCH: amd64
-      OSS_TARBALL_PATH: /tmp/build-darwin-amd64-fips-pkg/go/artifacts
       ENT_TARBALL_PATH: /tmp/build-darwin-amd64-fips-pkg/go/artifacts
       WORKSPACE_DIR: /tmp/build-darwin-amd64-fips-pkg
       RUNTIME: "fips"
