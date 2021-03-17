@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -ex
 
 usage() { echo "Usage: $(basename $0) [-t <oss/ent>] [-v <version>] [-p <package type>] <-a [amd64/x86_64]|[386/i386]|arm|arm64> <-r fips> <-s tarball source dir> <-m tsh>" 1>&2; exit 1; }
 while getopts ":t:v:p:a:r:s:m:" o; do
