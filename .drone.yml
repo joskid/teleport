@@ -2960,9 +2960,9 @@ trigger:
     - pull_request
   #event:
   #  - tag
-  ref:
-    include:
-      - refs/tags/v*
+  #ref:
+  #  include:
+  #    - refs/tags/v*
   repo:
     include:
       - gravitational/*
@@ -3118,9 +3118,9 @@ trigger:
     - pull_request
   #event:
   #  - tag
-  ref:
-    include:
-      - refs/tags/v*
+  #ref:
+  #  include:
+  #    - refs/tags/v*
   repo:
     include:
       - gravitational/*
