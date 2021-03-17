@@ -72,7 +72,7 @@ func (a *Server) upsertGithubConnector(ctx context.Context, connector services.G
 			Code: events.GithubConnectorCreatedCode,
 		},
 		UserMetadata: events.UserMetadata{
-			User: clientUsername(ctx),
+			User: ClientUsername(ctx),
 		},
 		ResourceMetadata: events.ResourceMetadata{
 			Name: connector.GetName(),
@@ -96,7 +96,7 @@ func (a *Server) deleteGithubConnector(ctx context.Context, connectorName string
 			Code: events.GithubConnectorDeletedCode,
 		},
 		UserMetadata: events.UserMetadata{
-			User: clientUsername(ctx),
+			User: ClientUsername(ctx),
 		},
 		ResourceMetadata: events.ResourceMetadata{
 			Name: connectorName,
