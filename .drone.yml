@@ -843,15 +843,10 @@ platform:
 
 trigger:
   event:
-    #FIXME(dmitri): debugging
-    exclude:
-      - push
     include:
+      - push
+    exclude:
       - pull_request
-    #include:
-    #  - push
-    #exclude:
-    #  - pull_request
   branch:
     include:
       - master
@@ -3214,21 +3209,20 @@ steps:
       # generate checksums (for mac)
       - cd $WORKSPACE_DIR/go/artifacts && for FILE in teleport*.pkg; do shasum -a 256 $FILE > $FILE.sha256; done && ls -l
 
-  #FIXME(dmitri): debugging
-  #- name: Upload to S3
-  #  environment:
-  #    AWS_S3_BUCKET:
-  #      from_secret: AWS_S3_BUCKET
-  #    AWS_ACCESS_KEY_ID:
-  #      from_secret: AWS_ACCESS_KEY_ID
-  #    AWS_SECRET_ACCESS_KEY:
-  #      from_secret: AWS_SECRET_ACCESS_KEY
-  #    AWS_REGION: us-west-2
-  #    WORKSPACE_DIR: /tmp/build-darwin-amd64-fips-pkg
-  #  commands:
-  #    - set -u
-  #    - cd $WORKSPACE_DIR/go/artifacts
-  #    - aws s3 sync . s3://$AWS_S3_BUCKET/teleport/tag/${DRONE_TAG##v}
+  - name: Upload to S3
+    environment:
+      AWS_S3_BUCKET:
+        from_secret: AWS_S3_BUCKET
+      AWS_ACCESS_KEY_ID:
+        from_secret: AWS_ACCESS_KEY_ID
+      AWS_SECRET_ACCESS_KEY:
+        from_secret: AWS_SECRET_ACCESS_KEY
+      AWS_REGION: us-west-2
+      WORKSPACE_DIR: /tmp/build-darwin-amd64-fips-pkg
+    commands:
+      - set -u
+      - cd $WORKSPACE_DIR/go/artifacts
+      - aws s3 sync . s3://$AWS_S3_BUCKET/teleport/tag/${DRONE_TAG##v}
 
   - name: Clean up exec runner storage
     environment:
@@ -4837,6 +4831,6 @@ volumes:
 
 ---
 kind: signature
-hmac: ba1b81aea3cd427028abdd0c36389cb0ea51fc71bdca6d454975f184b5dbe10c
+hmac: 0f5f8bf1547e013ee5e354405074634b3d96a2f113a6ee8d3894f0f19a9178da
 
 ...
