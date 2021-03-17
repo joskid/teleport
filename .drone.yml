@@ -3011,9 +3011,11 @@ steps:
       - GIT_SSH_COMMAND='ssh -i $WORKSPACE_DIR/.ssh/id_rsa -o UserKnownHostsFile=$WORKSPACE_DIR/.ssh/known_hosts -F /dev/null' git submodule update --init --recursive webassets || true
       - rm -rf $WORKSPACE_DIR/.ssh
       - mkdir -p $WORKSPACE_DIR/go/artifacts $WORKSPACE_DIR/go/cache
-      - echo "${DRONE_TAG##v}" > $WORKSPACE_DIR/go/.version.txt
+      # FIXME(dmitri): debugging
+      #- echo "${DRONE_TAG##v}" > $WORKSPACE_DIR/go/.version.txt
+      - echo "${DRONE_COMMIT}" > $WORKSPACE_DIR/go/.version.txt
       - cat $WORKSPACE_DIR/go/.version.txt
-      - echo "${BORINGCRYPTO_BRANCH}" > $WORKSPACE_DIR/go/.bc_commit.txt
+      - echo "$BORINGCRYPTO_BRANCH" > $WORKSPACE_DIR/go/.bc_commit.txt
       - cat $WORKSPACE_DIR/go/.bc_commit.txt
 
   - name: Build the boringcrypto Go builder
@@ -3062,7 +3064,7 @@ steps:
       - cd $WORKSPACE_DIR/go/src/github.com/gravitational/teleport
       - export VERSION=$(cat $WORKSPACE_DIR/go/.version.txt)
       - export BORINGCRYPTO_BRANCH=$(cat $WORKSPACE_DIR/go/.bc_commit.txt)
-      - make -C e clean release VERSION=$VERSION OS=$OS ARCH=$ARCH FIPS=$FIPS GO_BINARY="$GODL_DIR/build/$BORINGCRYPTO_BRANCH"
+      - make -C e clean release GITTAG=v$VERSION VERSION=$VERSION OS=$OS ARCH=$ARCH FIPS=$FIPS GO_BINARY="$GODL_DIR/build/$BORINGCRYPTO_BRANCH"
 
   - name: Copy Mac artifacts
     environment:
@@ -3166,7 +3168,9 @@ steps:
       - GIT_SSH_COMMAND='ssh -i $WORKSPACE_DIR/.ssh/id_rsa -o UserKnownHostsFile=$WORKSPACE_DIR/.ssh/known_hosts -F /dev/null' git submodule update --init --recursive webassets || true
       - rm -rf $WORKSPACE_DIR/.ssh
       - mkdir -p $WORKSPACE_DIR/go/artifacts $WORKSPACE_DIR/go/cache
-      - echo "${DRONE_TAG##v}" > $WORKSPACE_DIR/go/.version.txt
+      #FIXME(dmitri): debugging
+      #- echo "${DRONE_TAG##v}" > $WORKSPACE_DIR/go/.version.txt
+      - echo "${DRONE_COMMIT}" > $WORKSPACE_DIR/go/.version.txt
       - cat $WORKSPACE_DIR/go/.version.txt
 
   - name: Download built tarball artifacts from S3
