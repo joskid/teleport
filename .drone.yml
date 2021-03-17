@@ -3181,6 +3181,12 @@ steps:
     environment:
       OS: darwin
       ARCH: amd64
+      APPLE_USERNAME:
+        from_secret: APPLE_USERNAME
+      APPLE_PASSWORD:
+        from_secret: APPLE_PASSWORD
+      BUILDBOX_PASSWORD:
+        from_secret: BUILDBOX_PASSWORD
       ENT_TARBALL_PATH: /tmp/build-darwin-amd64-fips-pkg/go/artifacts
       WORKSPACE_DIR: /tmp/build-darwin-amd64-fips-pkg
       RUNTIME: "fips"
@@ -3188,6 +3194,11 @@ steps:
       - set -u
       - cd $WORKSPACE_DIR/go/src/github.com/gravitational/teleport
       - export VERSION=$(cat $WORKSPACE_DIR/go/.version.txt)
+      - export HOME=/Users/build
+      # unlock login keychain
+      - security unlock-keychain -p $${BUILDBOX_PASSWORD} login.keychain
+      # show available certificates
+      - security find-identity -v
       - make -C e pkg VERSION=$VERSION OS=$OS ARCH=$ARCH RUNTIME=$RUNTIME
 
   - name: Copy Mac pkg artifacts
