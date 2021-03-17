@@ -74,17 +74,20 @@ type AccessRequest interface {
 	SetSystemAnnotations(map[string][]string)
 	// GetOriginalRoles gets the original (pre-override) role list.
 	GetOriginalRoles() []string
+	// GetThresholds gets the review thresholds.
+	GetThresholds() []AccessReviewThreshold
 	// SetThresholds sets the review thresholds (internal use only).
 	SetThresholds([]AccessReviewThreshold)
+	// GetRoleThresholdMapping gets the rtm.  See documentation of the
+	// AccessRequestSpecV3.RoleThresholdMapping field for details.
+	GetRoleThresholdMapping() map[string]ThresholdIndexSets
 	// SetRoleThresholdMapping sets the rtm (internal use only).  See documentation
-	// of the AccessRequestSpecV3.RoleThresholdMapping field for details on how
-	// the rtm works and why it is necessary.
+	// of the AccessRequestSpecV3.RoleThresholdMapping field for details.
 	SetRoleThresholdMapping(map[string]ThresholdIndexSets)
-	// ApplyReview applies an access review.  The supplied parser must be pre-configured to evaluate
-	// boolean expressions based on the review and its author.
-	ApplyReview(AccessReview, predicate.Parser) error
 	// GetReviews gets the list of currently applied access reviews.
 	GetReviews() []AccessReview
+	// SetReviews sets the list of currently applied access reviews (internal use only).
+	SetReviews([]AccessReview)
 	// GetSuggestedReviewers gets the suggested reviewer list.
 	GetSuggestedReviewers() []string
 	// SetSuggestedReviewers sets the suggested reviewer list.
@@ -233,9 +236,19 @@ func (r *AccessRequestV3) getThreshold(tid uint32) (AccessReviewThreshold, error
 	return r.Spec.Thresholds[idx], nil
 }
 
+// GetThresholds gets the review thresholds.
+func (r *AccessRequestV3) GetThresholds() []AccessReviewThreshold {
+	return r.Spec.Thresholds
+}
+
 // SetThresholds sets the review thresholds.
 func (r *AccessRequestV3) SetThresholds(thresholds []AccessReviewThreshold) {
 	r.Spec.Thresholds = thresholds
+}
+
+// GetRoleThresholdMapping gets the rtm.
+func (r *AccessRequestV3) GetRoleThresholdMapping() map[string]ThresholdIndexSets {
+	return r.Spec.RoleThresholdMapping
 }
 
 // SetRoleThresholdMapping sets the rtm (internal use only).
@@ -243,203 +256,9 @@ func (r *AccessRequestV3) SetRoleThresholdMapping(rtm map[string]ThresholdIndexS
 	r.Spec.RoleThresholdMapping = rtm
 }
 
-// ApplyReview applies an access review.  The supplied parser must be pre-configured to evaluate
-// boolean expressions based on the review and its author.  Prefer using services.ApplyAccessReview
-// rather than calling this method directly.
-func (r *AccessRequestV3) ApplyReview(rev AccessReview, parser predicate.Parser) error {
-	if !rev.ProposedState.IsApproved() && !rev.ProposedState.IsDenied() {
-		return trace.BadParameter("invalid state proposal: %s (expected approval/denial)", rev.ProposedState)
-	}
-
-	// the default theshold should exist. if it does not, the request either is not fully
-	// initialized (i.e. variable expansion has not been run yet) or the request was inserted into
-	// the backend by a teleport instance which does not support the review feature.
-	if len(r.Spec.Thresholds) == 0 {
-		return trace.BadParameter("request is uninitialized or does not support reviews")
-	}
-
-	for _, existingReview := range r.Spec.Reviews {
-		if existingReview.Author == rev.Author {
-			return trace.AccessDenied("user %q has already reviewed this request", rev.Author)
-		}
-	}
-
-	// dedupe and sort roles to simplify comparing role lists
-	rev.Roles = utils.Deduplicate(rev.Roles)
-	sort.Strings(rev.Roles)
-
-	// TODO(fspmarshall): Remove this restriction once role overrides
-	// in reviews are fully supported.
-	if len(rev.Roles) != 0 && len(rev.Roles) != len(r.Spec.RoleThresholdMapping) {
-		return trace.NotImplemented("reviews cannot perform role subselection, try omitting role list")
-	}
-
-	// matches collects the results of checking all relevant thresholds
-	// to see if their filters match this review.
-	matches := make(map[uint32]bool)
-	var matchCount int
-
-	roles := rev.Roles
-	if len(roles) == 0 {
-		roles = r.GetOriginalRoles()
-	}
-
-	// check for matches with all thresholds related to the roles selected by this review
-	// and aggregate the results.
-	for _, role := range roles {
-		thresholdSets, ok := r.Spec.RoleThresholdMapping[role]
-		if !ok {
-			return trace.BadParameter("role %q is not a member of this request", role)
-		}
-
-		for _, tset := range thresholdSets.Sets {
-			for _, tid := range tset.Indexes {
-				if _, ok := matches[tid]; ok {
-					// already checked this threshold
-					continue
-				}
-
-				thresh, err := r.getThreshold(tid)
-				if err != nil {
-					return trace.Wrap(err)
-				}
-
-				match, err := thresh.MatchesFilter(parser)
-				if err != nil {
-					return trace.Wrap(err)
-				}
-
-				matches[tid] = match
-				if match {
-					matchCount++
-				}
-			}
-		}
-	}
-
-	// record a list of all thresholds whose filters match this review.
-	rev.ThresholdIndexes = make([]uint32, 0, matchCount)
-	for tid, matched := range matches {
-		if matched {
-			rev.ThresholdIndexes = append(rev.ThresholdIndexes, tid)
-		}
-	}
-
-	r.Spec.Reviews = append(r.Spec.Reviews, rev)
-
-	// recalculate updated request state.
-	return r.onReview()
-}
-
-// onReview checks if we've hit sufficient thresholds for a state-transition,
-// and applies it if that is the case.
-func (r *AccessRequestV3) onReview() error {
-	if !r.Spec.State.IsPending() {
-		// no further state-transitions are performed after we exit
-		// the PENDING state.
-		return nil
-	}
-
-	// TODO(fspmarshall): Rework this function to support role subselection.
-
-	// approved keeps track of roles that have hit at least one
-	// of their approval thresholds.
-	approved := make(map[string]struct{})
-	// counts keeps track of the approval and denial counts for all thresholds.
-	counts := make([]struct{ approval, denial uint32 }, len(r.Spec.Thresholds))
-
-	// lastReview stores the most recently processed review.  Since processing halts
-	// once we hit our first approval/denial condition, this review represents the
-	// triggering review for the approval/denial state-transition.
-	var lastReview AccessReview
-
-	// Iterate through all reviews and aggregate them against `counts`.
-ProcessReviews:
-	for _, rev := range r.Spec.Reviews {
-		lastReview = rev
-		for _, tid := range rev.ThresholdIndexes {
-			idx := int(tid)
-			if len(r.Spec.Thresholds) <= idx {
-				return trace.Errorf("threshold index '%d' out of range (this is a bug)", idx)
-			}
-			if rev.ProposedState.IsApproved() {
-				counts[idx].approval++
-			}
-			if rev.ProposedState.IsDenied() {
-				counts[idx].denial++
-			}
-		}
-
-		// If we hit any denial thresholds, short-circuit immediately
-		for i, t := range r.Spec.Thresholds {
-
-			if counts[i].denial >= t.Deny && t.Deny != 0 {
-				// A single denial threshold has been met, deny entire request
-				r.Spec.State = RequestState_DENIED
-				r.Spec.ResolveReason = lastReview.Reason
-				r.Spec.ResolveAnnotations = lastReview.Annotations
-				return nil
-			}
-		}
-
-		// check for roles that can be transitioned to an approved state
-	CheckRoleApprovals:
-		for role, thresholdSets := range r.Spec.RoleThresholdMapping {
-			if _, ok := approved[role]; ok {
-				// role was marked approved during a previous iteration
-				continue CheckRoleApprovals
-			}
-
-			// iterate through all theshold sets.  All sets must have at least
-			// one threshold which has hit its approval count in order for the
-			// role to be considered approved.
-		CheckThresholdSets:
-			for _, thresholds := range thresholdSets.Sets {
-
-				for _, tid := range thresholds.Indexes {
-					idx := int(tid)
-					if len(r.Spec.Thresholds) <= idx {
-						return trace.Errorf("threshold index out of range %s/%d (this is a bug)", role, tid)
-					}
-					t := r.Spec.Thresholds[idx]
-
-					if counts[idx].approval >= t.Approve && t.Approve != 0 {
-						// this set contains a threshold which has met its approval condition.
-						// skip to the next set.
-						continue CheckThresholdSets
-					}
-				}
-
-				// no thresholds met for this set. there may be additional roles/thresholds
-				// which did meet their requirements this iteration, but there is no point
-				// processing them unless this set has also hit its requirements.  we therefore
-				// move immediately to processing the next review.
-				continue ProcessReviews
-			}
-
-			// since we skip to the next review as soon as we see a set which has not hit any of its
-			// approval scenarios, we know that if we get to this point the role must be approved.
-			approved[role] = struct{}{}
-		}
-		// If we got here, then we iterated across all roles in the rtm without hitting any that
-		// had not met their approval scenario.  The request has hit an approved state and further
-		// reviews will not be processed.
-		break ProcessReviews
-	}
-
-	if len(approved) != len(r.Spec.RoleThresholdMapping) {
-		// at least one role has not hit its approval threshold
-		return nil
-	}
-
-	r.Spec.State = RequestState_APPROVED
-
-	// resolve reasons and annotations are set only by the final review.
-	r.Spec.ResolveReason = lastReview.Reason
-	r.Spec.ResolveAnnotations = lastReview.Annotations
-	r.SetExpiry(r.GetAccessExpiry())
-
-	return nil
+// SetReviews sets the list of currently applied access reviews.
+func (r *AccessRequestV3) SetReviews(revs []AccessReview) {
+	r.Spec.Reviews = revs
 }
 
 // GetReviews gets the list of currently applied access reviews.

@@ -19,6 +19,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/teleport/lib/utils"
@@ -246,15 +247,129 @@ func ValidateAccessPredicates(role Role) error {
 }
 
 // ApplyAccessReview attempts to apply the specified access review to the specified request.
-// If this function returns true, the review triggered a state-transition.
 func ApplyAccessReview(req AccessRequest, rev types.AccessReview, author User) error {
 	if rev.Author != author.GetName() {
 		return trace.BadParameter("mismatched review author (expected %q, got %q)", rev.Author, author)
 	}
 
-	// create a custom parser context which exposes a simplified view of the review author
-	// and the request for evaluation of review threshold filters.
-	parser, err := NewJSONBoolParser(thresholdFilterContext{
+	// role lists must be deduplicated and sorted
+	rev.Roles = utils.Deduplicate(rev.Roles)
+	sort.Strings(rev.Roles)
+
+	// basic compatibility/sanity checks
+	if err := checkReviewCompat(req, rev); err != nil {
+		return trace.Wrap(err)
+	}
+
+	// aggregate the threshild indexes for this review
+	tids, err := collectReviewThresholdIndexes(req, rev, author)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+
+	// set threshold indexes and store the review
+	rev.ThresholdIndexes = tids
+	req.SetReviews(append(req.GetReviews(), rev))
+
+	// if request has already exited the pending state, then no further work
+	// needs to be done (subsequent reviews have no effect after initial
+	// state-transition).
+	if !req.GetState().IsPending() {
+		return nil
+	}
+
+	// request is still pending, so check to see if this
+	// review introduces a state-transition.
+	res, err := calculateReviewBasedResolution(req)
+	if err != nil || res == nil {
+		return trace.Wrap(err)
+	}
+
+	// state-transition was triggered.  update the appropriate fields.
+	req.SetState(res.state)
+	req.SetResolveReason(res.reason)
+	req.SetResolveAnnotations(res.annotations)
+	req.SetExpiry(req.GetAccessExpiry())
+	return nil
+}
+
+// checkReviewCompat performs basic checks to ensure that the specified review can be
+// applied to the specified request (part of review application logic).
+func checkReviewCompat(req AccessRequest, rev types.AccessReview) error {
+	// we currently only support reviews that propose approval/denial.  future iterations
+	// may support additional states (e.g. None for comment-only reviews).
+	if !rev.ProposedState.IsApproved() && !rev.ProposedState.IsDenied() {
+		return trace.BadParameter("invalid state proposal: %s (expected approval/denial)", rev.ProposedState)
+	}
+
+	// the default theshold should exist. if it does not, the request either is not fully
+	// initialized (i.e. variable expansion has not been run yet) or the request was inserted into
+	// the backend by a teleport instance which does not support the review feature.
+	if len(req.GetThresholds()) == 0 {
+		return trace.BadParameter("request is uninitialized or does not support reviews")
+	}
+
+	// user must not have previously reviewed this request
+	for _, existingReview := range req.GetReviews() {
+		if existingReview.Author == rev.Author {
+			return trace.AccessDenied("user %q has already reviewed this request", rev.Author)
+		}
+	}
+
+	rtm := req.GetRoleThresholdMapping()
+
+	// TODO(fspmarshall): Remove this restriction once role overrides
+	// in reviews are fully supported.
+	if len(rev.Roles) != 0 && len(rev.Roles) != len(rtm) {
+		return trace.NotImplemented("reviews cannot perform role subselection, try omitting role list")
+	}
+
+	// verify that all roles are present within the request
+	for _, role := range rev.Roles {
+		if _, ok := rtm[role]; !ok {
+			return trace.BadParameter("role %q is not a member of this request", role)
+		}
+	}
+
+	return nil
+}
+
+// collectReviewThresholdIndexes aggregates the indexes of all thresholds whose filters match
+// the supplied review (part of review application logic).
+func collectReviewThresholdIndexes(req AccessRequest, rev types.AccessReview, author User) ([]uint32, error) {
+	parser, err := newThresholdFilterParser(req, rev, author)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	var tids []uint32
+
+	for i, t := range req.GetThresholds() {
+		match, err := t.MatchesFilter(parser)
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+
+		if !match {
+			continue
+		}
+
+		tid := uint32(i)
+		if int(tid) != i {
+			// sanity-check.  we disallow extremely large threshold lists elsewhere, but its always
+			// best to double-check these things.
+			return nil, trace.Errorf("threshold index %d out of supported range (this is a bug)", i)
+		}
+		tids = append(tids, tid)
+	}
+
+	return tids, nil
+}
+
+// newThresholdFilterParser creates a custom parser context which exposes a simplified view of the review author
+// and the request for evaluation of review threshold filters.
+func newThresholdFilterParser(req AccessRequest, rev types.AccessReview, author User) (BoolPredicateParser, error) {
+	return NewJSONBoolParser(thresholdFilterContext{
 		Reviewer: reviewAuthorContext{
 			Roles:  author.GetRoles(),
 			Traits: author.GetTraits(),
@@ -269,11 +384,139 @@ func ApplyAccessReview(req AccessRequest, rev types.AccessReview, author User) e
 			SystemAnnotations: req.GetSystemAnnotations(),
 		},
 	})
-	if err != nil {
-		return trace.Wrap(err)
+}
+
+// requestResolution describes a request state-transition from
+// PENDING to some other state.
+type requestResolution struct {
+	state       RequestState
+	reason      string
+	annotations map[string][]string
+}
+
+// calculateReviewBasedResolution calculates the request resolution based upon
+// a request's reviews.  Returns (nil,nil) in the event no resolution has been reached.
+func calculateReviewBasedResolution(req AccessRequest) (*requestResolution, error) {
+	// thresholds and reviews must be populated before state-transitions are possible
+	thresholds, reviews := req.GetThresholds(), req.GetReviews()
+	if len(thresholds) == 0 || len(reviews) == 0 {
+		return nil, nil
 	}
 
-	return req.ApplyReview(rev, parser)
+	// approved keeps track of roles that have hit at least one
+	// of their approval thresholds.
+	approved := make(map[string]struct{})
+
+	// denied keeps track of whether or not we've seen *any* role get denied
+	// (which role does not currently matter since we short-circuit on the
+	// first denial to be triggered).
+	denied := false
+
+	// counts keeps track of the approval and denial counts for all thresholds.
+	counts := make([]struct{ approval, denial uint32 }, len(thresholds))
+
+	// lastReview stores the most recently processed review.  Since processing halts
+	// once we hit our first approval/denial condition, this review represents the
+	// triggering review for the approval/denial state-transition.
+	var lastReview types.AccessReview
+
+	// Iterate through all reviews and aggregate them against `counts`.
+ProcessReviews:
+	for _, rev := range reviews {
+		lastReview = rev
+		for _, tid := range rev.ThresholdIndexes {
+			idx := int(tid)
+			if len(thresholds) <= idx {
+				return nil, trace.Errorf("threshold index '%d' out of range (this is a bug)", idx)
+			}
+			switch {
+			case rev.ProposedState.IsApproved():
+				counts[idx].approval++
+			case rev.ProposedState.IsDenied():
+				counts[idx].denial++
+			default:
+				return nil, trace.BadParameter("cannot calculate state-transition, unexpected proposal: %s", rev.ProposedState)
+			}
+		}
+
+		// If we hit any denial thresholds, short-circuit immediately
+		for i, t := range thresholds {
+
+			if counts[i].denial >= t.Deny && t.Deny != 0 {
+				denied = true
+				break ProcessReviews
+			}
+		}
+
+		// check for roles that can be transitioned to an approved state
+	CheckRoleApprovals:
+		for role, thresholdSets := range req.GetRoleThresholdMapping() {
+			if _, ok := approved[role]; ok {
+				// role was marked approved during a previous iteration
+				continue CheckRoleApprovals
+			}
+
+			// iterate through all theshold sets.  All sets must have at least
+			// one threshold which has hit its approval count in order for the
+			// role to be considered approved.
+		CheckThresholdSets:
+			for _, tset := range thresholdSets.Sets {
+
+				for _, tid := range tset.Indexes {
+					idx := int(tid)
+					if len(thresholds) <= idx {
+						return nil, trace.Errorf("threshold index out of range %s/%d (this is a bug)", role, tid)
+					}
+					t := thresholds[idx]
+
+					if counts[idx].approval >= t.Approve && t.Approve != 0 {
+						// this set contains a threshold which has met its approval condition.
+						// skip to the next set.
+						continue CheckThresholdSets
+					}
+				}
+
+				// no thresholds met for this set. there may be additional roles/thresholds
+				// which did meet their requirements this iteration, but there is no point
+				// processing them unless this set has also hit its requirements.  we therefore
+				// move immediately to processing the next review.
+				continue ProcessReviews
+			}
+
+			// since we skip to the next review as soon as we see a set which has not hit any of its
+			// approval scenarios, we know that if we get to this point the role must be approved.
+			approved[role] = struct{}{}
+		}
+		// If we got here, then we iterated across all roles in the rtm without hitting any that
+		// had not met their approval scenario.  The request has hit an approved state and further
+		// reviews will not be processed.
+		break ProcessReviews
+	}
+
+	switch {
+	case lastReview.ProposedState.IsApproved():
+		if len(approved) != len(req.GetRoleThresholdMapping()) {
+			// processing halted on approval, but not all roles have
+			// hit their approval thresholds; no state-transition.
+			return nil, nil
+		}
+	case lastReview.ProposedState.IsDenied():
+		if !denied {
+			// processing halted on denial, but no roles have hit
+			// their denial thresholds; no state-transition.
+			return nil, nil
+		}
+	default:
+		return nil, trace.BadParameter("cannot calculate state-transition, unexpected proposal: %s", lastReview.ProposedState)
+	}
+
+	// processing halted on valid state-transition; return resolution
+	// based on last review
+	return &requestResolution{
+		state:       lastReview.ProposedState,
+		reason:      lastReview.Reason,
+		annotations: lastReview.Annotations,
+	}, nil
 }
 
 // GetAccessRequest is a helper function assists with loading a specific request by ID.
